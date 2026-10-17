@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mylovely-mice</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='9' cy='9' r='5' fill='%23b6ada1'/%3E%3Ccircle cx='23' cy='9' r='5' fill='%23b6ada1'/%3E%3Cellipse cx='16' cy='19' rx='10' ry='9' fill='%23cdc5b9'/%3E%3Ccircle cx='12' cy='17' r='1.6' fill='%230c0c10'/%3E%3Ccircle cx='20' cy='17' r='1.6' fill='%230c0c10'/%3E%3Ccircle cx='16' cy='22' r='2' fill='%23e2a0a6'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0a0d12; --bg2:#0f141b; --panel:#111823; --panel2:#151e2a;
+    --line:#1e2a3a; --line2:#2a3a4f;
+    --ink:#e8eef6; --ink2:#9fb2c8; --ink3:#64788f;
+    --accent:#4dd4c0;
+    --sensory:#3987e5; --spatial:#d95926; --motor:#199e70; --reward:#c98500; --state:#d55181;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --r:7px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;
+    overflow:hidden;-webkit-font-smoothing:antialiased}
+  #app{display:grid;grid-template-rows:auto 1fr auto;height:100vh}
+  button{font:inherit}
+
+  /* ============================ top bar ============================ */
+  #topbar{display:flex;align-items:center;gap:14px;padding:7px 13px;
+    background:linear-gradient(180deg,#121a25,#0d131b);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{display:flex;align-items:baseline;gap:8px;font-weight:650;white-space:nowrap}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 10px var(--accent);animation:pulse 1.6s ease-in-out infinite;align-self:center}
+  @keyframes pulse{50%{opacity:.35;box-shadow:0 0 2px var(--accent)}}
+  .brand small{color:var(--ink3);font-weight:400;font-size:11px}
+
+  .stats{display:flex;gap:2px;flex:1;flex-wrap:wrap}
+  .stat{display:flex;flex-direction:column;gap:1px;padding:3px 10px;border-left:1px solid var(--line);
+    min-width:62px;cursor:help;border-radius:4px;transition:background .12s}
+  .stat:hover{background:#18222e}
+  .stat label{font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+  .stat b{font-family:var(--mono);font-size:14px;font-weight:600;line-height:1.1}
+  .stat b span{font-size:9px;color:var(--ink3);margin-left:2px;font-weight:400}
+
+  .toolbar{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+  .btn{font-size:11px;color:var(--ink2);background:var(--panel2);border:1px solid var(--line2);
+    border-radius:5px;padding:4px 9px;cursor:pointer;transition:.13s;white-space:nowrap}
+  .btn:hover{color:var(--ink);border-color:var(--accent);background:#1a2634}
+  .btn.on{color:#06211d;background:var(--accent);border-color:var(--accent);font-weight:600}
+  .btn.ghost{background:transparent}
+  kbd{font-family:var(--mono);font-size:10px;background:#0b1118;border:1px solid var(--line2);
+    border-bottom-width:2px;border-radius:3px;padding:1px 4px;color:var(--ink2)}
+
+  /* ============================ layout ============================ */
+  main{display:grid;grid-template-columns:1fr 414px;min-height:0}
+  #world-pane{position:relative;min-width:0;background:#070a0e}
+  #world{display:block;width:100%;height:100%;cursor:crosshair}
+
+  /* floating cards over the 3-D view */
+  .float{position:absolute;background:#0a121bf2;border:1px solid var(--line2);border-radius:var(--r);
+    backdrop-filter:blur(6px);box-shadow:0 6px 22px #0007}
+  .float h5{margin:0;font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink3);
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+    padding:7px 10px;cursor:pointer;user-select:none}
+  .float h5 .tw{color:var(--ink3);font-size:10px;transition:transform .18s;margin-left:8px}
+  #col-sub{margin-left:auto;color:var(--line2);text-transform:none;letter-spacing:0;font-size:9px;font-weight:400}
+  .float[data-collapsed] .tw{transform:rotate(-90deg)}
+  .float[data-collapsed] .body{display:none}
+  .float .body{padding:0 10px 9px}
+
+  #hud{position:absolute;left:12px;top:11px;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+  .badge{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;background:#0a121bd9;
+    border:1px solid var(--line2);border-radius:5px;padding:3px 8px;color:var(--ink2);align-self:flex-start}
+  .badge b{color:var(--ink)}
+  #state-badge{border-color:#2a4a44;color:var(--accent)}
+  #swr-badge{border-color:#4a2a3a;color:#e8749d;display:none}
+
+  /* --- event feed: plain-language narration --- */
+  #feed{left:12px;bottom:40px;width:330px}
+  #feed-list{display:flex;flex-direction:column;gap:3px;max-height:168px;overflow:hidden}
+  .ev{display:grid;grid-template-columns:auto 1fr;gap:7px;align-items:baseline;
+    padding:4px 7px;border-radius:5px;background:#101a26;border-left:2px solid var(--line2);
+    animation:slideIn .3s ease-out}
+  @keyframes slideIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+  .ev time{font-family:var(--mono);font-size:9px;color:var(--ink3)}
+  .ev span{font-size:11px;color:var(--ink2);line-height:1.35}
+  .ev span b{color:var(--ink);font-weight:600}
+  .ev.fade{opacity:.45}
+  #feed-empty{font-size:10.5px;color:var(--ink3);font-style:italic;padding:3px 2px}
+
+  #scalebar{position:absolute;left:12px;bottom:12px;color:var(--ink3);font-family:var(--mono);
+    font-size:10px;pointer-events:none}
+  #scalebar .bar{height:3px;background:var(--ink3);margin-bottom:3px}
+
+  /* --- colony --- */
+  #colony{right:12px;top:11px;width:306px}
+  #cgrid{display:flex;flex-direction:column;gap:2px;max-height:214px;overflow-y:auto;
+    margin:0 -4px;padding:0 4px}
+  #cgrid::-webkit-scrollbar{width:6px}
+  #cgrid::-webkit-scrollbar-thumb{background:#1d2836;border-radius:3px}
+  .crow{padding:4px 5px;border-radius:5px;border:1px solid transparent;cursor:pointer;transition:.12s}
+  .crow:hover{background:#18222e}
+  .crow.me{border-color:var(--accent);background:#10241f}
+  .ctop{display:flex;align-items:center;gap:5px;margin-bottom:3px;min-width:0}
+  .ctop .sx{font-size:12px;line-height:1;flex:none}
+  .ctop .nm{font-weight:650;font-size:11px;color:var(--ink);white-space:nowrap;flex:none}
+  .ctop .age{font-size:8px;color:var(--ink3);border:1px solid var(--line2);border-radius:3px;
+    padding:0 3px;flex:none}
+  .ctop .age.juv{color:#e58fb4;border-color:#5a3a48}
+  .ctop .st{font-family:var(--mono);font-size:8.5px;color:var(--accent);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .ctop .you{margin-left:auto;font-size:8px;color:var(--accent);border:1px solid #2a4a44;
+    border-radius:3px;padding:0 3px;flex:none}
+  .bars{display:flex;gap:3px}
+  .bars .bar{flex:1;height:4px;background:#0b1118;border-radius:2px;overflow:hidden}
+  .bars .bar i{display:block;height:100%;width:0;border-radius:2px;transition:width .15s linear}
+  .rep{font-size:8.5px;color:var(--ink3);margin-top:3px;line-height:1.45}
+  .rep .pg{color:#e58fb4;font-weight:600}
+  .rep .stray{color:#d55181}
+  .rep .pbar{display:block;height:3px;background:#0b1118;border-radius:2px;margin-top:2px;overflow:hidden}
+  .rep .pbar span{display:block;height:100%;background:#e58fb4;border-radius:2px;transition:width .3s}
+
+  /* environment + switches */
+  #envrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:9px;
+    border-top:1px solid var(--line);padding-top:8px}
+  #envrow label{display:flex;flex-direction:column;gap:1px;font-size:8.5px;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--ink3)}
+  #envrow label b{font-family:var(--mono);font-size:10px;color:var(--ink2);font-weight:500}
+  #envrow input[type=range]{width:100%;height:4px;-webkit-appearance:none;appearance:none;
+    background:var(--line2);border-radius:2px;outline:none;cursor:pointer;margin:5px 0 0}
+  #envrow input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    border-radius:50%;background:var(--ink2);cursor:pointer;border:2px solid #0a121b}
+  #sl-light::-webkit-slider-thumb{background:#ffd98a}
+  #sl-water::-webkit-slider-thumb{background:#5aa8d8}
+
+  #togrow{display:flex;flex-direction:column;gap:4px;margin-top:9px;
+    border-top:1px solid var(--line);padding-top:8px}
+  #togrow .ttl{font-size:8.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:1px}
+  .sw{display:flex;align-items:center;gap:8px;cursor:pointer;padding:3px 5px;margin:0 -5px;
+    border-radius:5px;transition:background .12s}
+  .sw:hover{background:#18222e}
+  .sw .track{width:26px;height:14px;border-radius:8px;background:#20303f;position:relative;
+    flex:none;transition:background .15s}
+  .sw .knob{position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;
+    background:var(--ink3);transition:.15s}
+  .sw.on .track{background:#17604f}
+  .sw.on .knob{left:14px;background:var(--accent)}
+  .sw .lb{font-size:11px;color:var(--ink2)}
+  .sw.on .lb{color:var(--ink)}
+  .sw .st{margin-left:auto;font-family:var(--mono);font-size:8.5px;color:var(--ink3)}
+
+  /* --- keys card --- */
+  #keys{right:12px;bottom:12px;width:252px}
+  #keys .body{font-size:11px;line-height:1.85;color:var(--ink2)}
+
+  /* ============================ right column ============================ */
+  #brain-pane{border-left:1px solid var(--line);background:var(--bg2);display:flex;
+    flex-direction:column;min-height:0;overflow-y:auto;overflow-x:hidden}
+  #brain-pane::-webkit-scrollbar{width:9px}
+  #brain-pane::-webkit-scrollbar-thumb{background:#1d2836;border-radius:5px}
+  .pcard{border-bottom:1px solid var(--line);padding:8px 11px 10px}
+  .pcard>h4{margin:0 0 7px;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink3);
+    display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .pcard>h4 em{font-style:normal;color:var(--line2);font-size:9px;letter-spacing:.03em}
+  #brain-card{flex:1 1 215px;min-height:200px;display:flex;flex-direction:column;padding-bottom:4px}
+  #brain-wrap{position:relative;flex:1;min-height:162px}
+  #brain{display:block;width:100%;height:100%;cursor:grab}
+  #brain:active{cursor:grabbing}
+  #brain-hint{position:absolute;right:4px;bottom:2px;font-size:9.5px;color:var(--ink3);
+    font-family:var(--mono);pointer-events:none}
+  #brain-tip{position:absolute;pointer-events:none;background:#060a0ff5;border:1px solid var(--line2);
+    border-radius:5px;padding:4px 8px;font-size:10.5px;color:var(--ink);display:none;
+    white-space:nowrap;transform:translate(-50%,-150%);z-index:5;max-width:230px}
+  #brain-tip b{font-family:var(--mono)}
+  #brain-tip i{font-style:normal;color:var(--ink3);display:block;font-size:9.5px;white-space:normal}
+
+  /* --- most active now --- */
+  #active-list{display:flex;flex-direction:column;gap:3px}
+  .arow{display:grid;grid-template-columns:42px 1fr 30px;gap:7px;align-items:center;
+    padding:3px 5px;margin:0 -5px;border-radius:5px;cursor:pointer;transition:background .12s}
+  .arow:hover{background:#18222e}
+  .arow .ac{font-family:var(--mono);font-size:10.5px;font-weight:600}
+  .arow .lb{font-size:10.5px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arow .hz{font-family:var(--mono);font-size:9.5px;color:var(--ink3);text-align:right}
+
+  /* --- inspector --- */
+  #insp{font-size:11.5px;line-height:1.5}
+  #insp .nm{font-weight:650;color:var(--ink);font-size:12.5px}
+  #insp .plain{color:var(--ink2);font-size:11.5px;margin:1px 0 4px}
+  #insp .meta{font-family:var(--mono);font-size:9.5px;color:var(--ink3);margin-bottom:5px}
+  #insp .role{color:var(--ink2)}
+  #insp .ref{color:var(--ink3);font-size:10.5px;font-style:italic;margin-top:4px}
+  #insp .live{font-family:var(--mono);font-size:10.5px;color:var(--accent);margin-top:6px;
+    border-top:1px dashed var(--line2);padding-top:5px}
+
+  /* --- maps --- */
+  #maps{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px}
+  .mapcard{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .mapcard .cap{font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);
+    display:flex;justify-content:space-between;gap:4px}
+  .mapcard .cap b{color:var(--ink2);font-family:var(--mono);letter-spacing:0;text-transform:none;
+    cursor:pointer;border-bottom:1px dotted var(--line2)}
+  .mapcard canvas{width:100%;aspect-ratio:1;display:block;background:#070a0e;
+    border:1px solid var(--line);border-radius:5px}
+  .mapcard .sub{font-size:9.5px;color:var(--ink3);font-family:var(--mono);text-align:center}
+
+  /* --- full population list --- */
+  #pop-card.folded #pop-body{display:none}
+  #chips{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:7px}
+  .chip{font-size:9.5px;padding:2px 7px;border-radius:10px;border:1px solid var(--line2);
+    color:var(--ink3);cursor:pointer;background:transparent;transition:.12s}
+  .chip:hover{color:var(--ink2);border-color:var(--ink3)}
+  .chip.on{color:#06211d;font-weight:600}
+  #pops{display:flex;flex-direction:column;gap:1px}
+  .gname{font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);
+    margin:6px 0 2px;padding-bottom:2px;border-bottom:1px solid var(--line)}
+  .prow{display:grid;grid-template-columns:46px 1fr 74px 28px;align-items:center;gap:7px;
+    padding:2px 5px;margin:0 -5px;border-radius:5px;cursor:pointer;transition:background .12s}
+  .prow:hover{background:#18222e}
+  .prow.sel{background:#1b2a38;outline:1px solid var(--line2)}
+  .prow .ac{font-family:var(--mono);font-size:10px;font-weight:600;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .prow .lb{font-size:10px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .prow .tr{height:5px;background:#0b1118;border-radius:3px;overflow:hidden}
+  .prow .fl{height:100%;width:0%;border-radius:3px;transition:width .08s linear}
+  .prow .hz{font-family:var(--mono);font-size:9px;color:var(--ink3);text-align:right}
+
+  /* ============================ footer ============================ */
+  footer{border-top:1px solid var(--line);background:#0b0f15;display:grid;
+    grid-template-columns:1fr 330px;height:182px}
+  .tcell{position:relative;min-width:0;padding:6px 8px 4px}
+  .tcell+.tcell{border-left:1px solid var(--line)}
+  .tcell>h4{margin:0 0 3px;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink3);display:flex;gap:10px;align-items:center}
+  .tcell>h4 .lg{display:flex;gap:9px;font-size:9px;letter-spacing:.02em;text-transform:none;color:var(--ink3)}
+  .tcell>h4 .lg i{font-style:normal;display:inline-flex;align-items:center;gap:3px}
+  .tcell>h4 .lg s{width:7px;height:7px;border-radius:2px;text-decoration:none;display:inline-block}
+  .tcell>h4 .q{margin-left:auto;color:var(--line2);cursor:help;font-size:10px}
+  .tcell canvas{display:block;width:100%;height:calc(100% - 16px)}
+  #trace-right{display:grid;grid-template-rows:1fr 1fr;padding:0}
+  #trace-right>div{padding:6px 9px 4px;min-height:0}
+  #trace-right>div+div{border-top:1px solid var(--line)}
+
+  /* ============================ welcome ============================ */
+  #welcome{position:fixed;inset:0;background:#060a0ee8;backdrop-filter:blur(7px);z-index:50;
+    display:flex;align-items:center;justify-content:center;padding:24px}
+  #welcome.hide{display:none}
+  .wcard{max-width:660px;width:100%;background:linear-gradient(180deg,#131c27,#0e151e);
+    border:1px solid var(--line2);border-radius:14px;padding:26px 28px;box-shadow:0 20px 60px #000a}
+  .wcard h1{margin:0 0 4px;font-size:21px;letter-spacing:-.2px;display:flex;align-items:center;gap:9px}
+  .wcard h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+  .wcard .lede{margin:0 0 18px;color:var(--ink2);font-size:13.5px;line-height:1.6}
+  .wtry{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:17px}
+  .wtry div{background:#101a26;border:1px solid var(--line);border-radius:9px;padding:11px 12px}
+  .wtry h3{margin:0 0 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+  .wtry p{margin:0;font-size:11.5px;line-height:1.5;color:var(--ink2)}
+  .wfoot{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .wfoot .note{font-size:11px;color:var(--ink3);line-height:1.5;flex:1;min-width:220px}
+  .wgo{background:var(--accent);color:#06211d;border:0;border-radius:8px;padding:10px 20px;
+    font-weight:700;font-size:13px;cursor:pointer;transition:.14s}
+  .wgo:hover{filter:brightness(1.12)}
+
+  @media (max-width:1240px){
+    main{grid-template-columns:1fr 360px}
+    footer{grid-template-columns:1fr 260px}
+    #feed{width:290px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand"><span class="dot"></span>mylovely&#8209;mice<small>mouse &amp; brain simulator</small></div>
+    <div class="stats" id="stats">
+      <div class="stat" title="Cheese eaten by the mouse you are driving"><label>cheese</label><b id="st-cheese">0</b></div>
+      <div class="stat" title="How fast it is moving. Mice walk at 5-15 cm/s and run up to ~45 cm/s."><label>speed</label><b id="st-speed">0<span>cm/s</span></b></div>
+      <div class="stat" title="Which way it faces, 0 degrees = north"><label>heading</label><b id="st-head">0<span>°</span></b></div>
+      <div class="stat" title="Theta rhythm in the hippocampus. It speeds up as the mouse runs faster - a real, measured relationship."><label>theta</label><b id="st-theta">6.7<span>Hz</span></b></div>
+      <div class="stat" title="Dopamine neuron firing. ~5 Hz at rest; it bursts when something is better than expected and pauses when it is worse."><label>dopamine</label><b id="st-da">5<span>Hz</span></b></div>
+      <div class="stat" title="How hungry it is right now"><label>hunger</label><b id="st-hunger">70<span>%</span></b></div>
+      <div class="stat" title="Total spikes per second across all 680 simulated neurons"><label>spikes</label><b id="st-spk">0<span>/s</span></b></div>
+      <div class="stat" title="Time since the session started"><label>session</label><b id="st-time">0:00</b></div>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="b-cam" title="Switch between following the mouse, free orbit, and an overhead view (C)">camera: follow</button>
+      <button class="btn" id="b-value" title="Paint the floor with how valuable the mouse has learned each spot to be (V)">value map</button>
+      <button class="btn on" id="b-trail" title="Show where the mouse has been (T)">trail</button>
+      <button class="btn" id="b-auto" title="Let the mouse forage by itself (O)">autopilot</button>
+      <button class="btn" id="b-optics" style="display:none"
+        title="Express an opsin in a region and stimulate it with light (G)">optogenetics</button>
+      <button class="btn" id="b-cue" title="Turn the white cue card. The head-direction compass turns with it - a real finding (M)">rotate cue</button>
+      <button class="btn" id="b-pause" title="Pause (P)">pause</button>
+      <button class="btn" id="b-reset" title="Start over (R)">reset</button>
+      <button class="btn ghost" id="b-help" title="What is this? (?)">?</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="world-pane">
+      <canvas id="world"></canvas>
+
+      <div id="hud">
+        <div class="badge" id="state-badge">RESTING</div>
+        <div class="badge" id="swr-badge">SHARP-WAVE RIPPLE</div>
+        <div class="badge" id="pos-badge">x <b>0</b> cm &nbsp; y <b>0</b> cm</div>
+      </div>
+
+      <div class="float" id="feed">
+        <h5 data-fold>what just happened <span class="tw">▾</span></h5>
+        <div class="body">
+          <div id="feed-list"><div id="feed-empty">Drive the mouse around — events will appear here.</div></div>
+        </div>
+      </div>
+
+      <div id="scalebar"><div class="bar" style="width:100px"></div>20 cm &nbsp;·&nbsp; arena 120 × 120 cm</div>
+
+      <div class="float" id="colony">
+        <h5 data-fold><span>the colony</span><span id="col-sub"></span><span class="tw">▾</span></h5>
+        <div class="body">
+          <div id="cgrid"></div>
+          <div id="envrow">
+            <label>light <b id="lab-light">35%</b>
+              <input type="range" id="sl-light" min="0" max="100" value="35"
+                title="Mice are nocturnal. Bright light makes them hug the walls and raises the stress and fear circuits."></label>
+            <label>water <b id="lab-water">dry</b>
+              <input type="range" id="sl-water" min="0" max="100" value="0"
+                title="Flood the arena. Wading is slow and stressful; the dish is always drinkable."></label>
+          </div>
+          <div id="togrow">
+            <div class="ttl">what they are able to do</div>
+            <div class="sw on" id="b-eat" title="Turn feeding off and the hunger circuit goes silent — they cannot eat at all">
+              <span class="track"><span class="knob"></span></span><span class="lb">eating</span><span class="st">on</span></div>
+            <div class="sw on" id="b-drink" title="Turn drinking off and the thirst circuit goes silent">
+              <span class="track"><span class="knob"></span></span><span class="lb">drinking</span><span class="st">on</span></div>
+            <div class="sw on" id="b-mate" title="Turn mating off and the mating circuit goes silent — mating becomes impossible">
+              <span class="track"><span class="knob"></span></span><span class="lb">mating</span><span class="st">on</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="float" id="keys">
+        <h5 data-fold>keys <span class="tw">▾</span></h5>
+        <div class="body">
+          <b style="color:var(--accent)">Click the floor</b> to send the mouse there<br>
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive &nbsp; <kbd>shift</kbd> run<br>
+          <kbd>space</kbd> sniff &nbsp; <kbd>X</kbd> swap mouse &nbsp; <kbd>O</kbd> auto<br>
+          <kbd>C</kbd> camera &nbsp; <kbd>V</kbd> value &nbsp; <kbd>T</kbd> trail<br>
+          <kbd>[</kbd><kbd>]</kbd> light &nbsp; <kbd>-</kbd><kbd>=</kbd> water &nbsp; <kbd>M</kbd> cue<br>
+          <kbd>P</kbd> pause &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>?</kbd> help
+        </div>
+      </div>
+    </section>
+
+    <aside id="brain-pane">
+      <div class="pcard" id="brain-card">
+        <h4>the brain, live <em>Allen CCFv3</em></h4>
+        <div id="brain-wrap">
+          <canvas id="brain"></canvas>
+          <div id="brain-tip"></div>
+          <div id="brain-hint">click a region</div>
+        </div>
+      </div>
+
+      <div class="pcard">
+        <h4>busiest right now <em>click to inspect</em></h4>
+        <div id="active-list"></div>
+      </div>
+
+      <div class="pcard">
+        <h4>about this region</h4>
+        <div id="insp"></div>
+      </div>
+
+      <div class="pcard">
+        <h4>what the cells have learned <em>built live from spikes</em></h4>
+        <div id="maps">
+          <div class="mapcard">
+            <div class="cap"><span>place</span><b id="cap-place" title="Click for a different cell">#0</b></div>
+            <canvas id="map-place" title="Where this one hippocampal cell fires. Explore and a single bright patch appears - its place field."></canvas>
+            <div class="sub" id="sub-place">0.0 Hz peak</div>
+          </div>
+          <div class="mapcard">
+            <div class="cap"><span>grid</span><b id="cap-grid" title="Click for a different cell">#0</b></div>
+            <canvas id="map-grid" title="An entorhinal grid cell. Explore long enough and its firing forms a repeating hexagonal lattice."></canvas>
+            <div class="sub" id="sub-grid">0.0 Hz peak</div>
+          </div>
+          <div class="mapcard">
+            <div class="cap"><span>compass</span><b id="cap-hd" title="Click for a different cell">#0</b></div>
+            <canvas id="polar-hd" title="A head-direction cell: it fires only when the mouse faces one way. White arrow = true heading."></canvas>
+            <div class="sub" id="sub-hd">tuning</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pcard folded" id="pop-card">
+        <h4 id="pop-head" style="cursor:pointer">all 37 regions <em id="pop-tw">show ▸</em></h4>
+        <div id="pop-body">
+          <div id="chips"></div>
+          <div id="pops"></div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <div class="tcell">
+      <h4>spikes <span class="lg" id="raster-legend"></span>
+        <span class="q" title="Every tick is one simulated neuron firing. Rows are grouped by brain system and scroll right to left.">?</span></h4>
+      <canvas id="raster"></canvas>
+    </div>
+    <div id="trace-right">
+      <div class="tcell" style="border-left:0">
+        <h4>brain waves <span class="lg"><i><s style="background:var(--spatial)"></s>theta</i><i><s style="background:#d55181"></s>ripple</i></span>
+          <span class="q" title="The hippocampal local field potential. Theta rides along while the mouse moves; pink flashes are sharp-wave ripples, which happen only when it stops.">?</span></h4>
+        <canvas id="lfp"></canvas>
+      </div>
+      <div class="tcell" style="border-left:0">
+        <h4>reward
+          <span class="q" title="Top: dopamine neuron firing. Bottom: how valuable the mouse has learned its current spot to be.">?</span></h4>
+        <canvas id="da"></canvas>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<div id="welcome" class="hide">
+  <div class="wcard">
+    <h1><span class="dot"></span>mylovely-mice</h1>
+    <p class="lede">Two mice in an open field — a male and a female — each wired to a working model of
+      its own brain. Drive one around and the panels on the right show what its neurons are doing,
+      moment by moment.</p>
+    <div class="wtry">
+      <div><h3>1 · move</h3><p>Click anywhere on the floor to send the mouse there, or drive it
+        with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>.</p></div>
+      <div><h3>2 · find cheese</h3><p>Watch <b>dopamine</b> spike the first time it finds some —
+        then fade as the mouse learns where to look.</p></div>
+      <div><h3>3 · stand still</h3><p>Stop moving and the hippocampus <b>replays the path you just
+        took</b>, backwards, in a fraction of a second.</p></div>
+    </div>
+    <div class="wfoot">
+      <p class="note">The brain you rotate is real mouse anatomy from the Allen Institute atlas, and each
+        population reproduces a published experimental result. Nothing is pre-recorded.</p>
+      <button class="wgo" id="welcome-start">Start exploring</button>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
