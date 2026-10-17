@@ -1,0 +1,16 @@
+# macOS
+.DS_Store
+._*
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# node, if a tool is ever added — the simulator itself has no dependencies
+node_modules/
+npm-debug.log*
+
+# local scratch
+*.local
+/tmp/

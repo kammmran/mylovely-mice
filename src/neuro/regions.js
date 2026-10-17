@@ -83,8 +83,8 @@ export const ROLES = {
   AUDp: {
     group: 'sensory',
     short: 'hearing — and pup calls',
-    role: 'Primary auditory cortex. Mouse hearing reaches far above ours, and newborn pups call at 40-90 kHz when they are cold or out of the nest. Those calls are what a mother is listening for, and hearing one is what sends her to fetch the pup.',
-    ref: 'Ehret 2005; Marlin et al. 2015',
+    role: 'Primary auditory cortex. Mouse hearing reaches far above ours, and newborn pups call at 40-90 kHz when they are cold or out of the nest. Those calls are what a mother is listening for, and hearing one is what sends her to fetch the pup. The same cortex carries the sounds a mouse would rather not hear: a cat call, or a noise burst loud enough to make it jump.',
+    ref: 'Ehret 2005; Marlin et al. 2015; Koch 1999',
   },
   'SSp-bfd': {
     group: 'sensory',
@@ -133,14 +133,14 @@ export const ROLES = {
   SCm: {
     group: 'motor',
     short: 'turning to look at things',
-    role: 'Superior colliculus (motor layers). Bursts when something new appears off to one side, and drives the orienting turn toward it.',
-    ref: 'Wang et al. 2015',
+    role: 'Superior colliculus (motor layers). Bursts when something new appears off to one side, and drives the orienting turn toward it — or, when what appears is a dark disc expanding overhead, the escape in the opposite direction, about a quarter of a second from stimulus to run.',
+    ref: 'Wang et al. 2015; Yilmaz & Meister 2013',
   },
   PAG: {
     group: 'motor',
-    short: 'alertness and fear',
-    role: 'Periaqueductal grey: arousal and defensive state. Rises with speed and with time spent exposed in the open centre.',
-    ref: 'Tovote et al. 2016',
+    short: 'freezing, or running',
+    role: 'Periaqueductal grey: where a defensive state becomes a defensive act. It is not one structure — the ventrolateral column drives freezing and the dorsolateral column drives flight, and because they inhibit each other the mouse does one or the other and never both. Also rises with speed and with time spent exposed in the open centre.',
+    ref: 'Tovote et al. 2016; Fanselow 1991',
   },
 
   // ---------------- reward ----------------
@@ -171,8 +171,8 @@ export const ROLES = {
   CEA: {
     group: 'reward',
     short: 'threat',
-    role: 'Central amygdala. Threat and aversion — bumps a wall, and it spikes; sits high while the mouse is out in the exposed centre.',
-    ref: 'Ciocchi et al. 2010',
+    role: 'Central amygdala. The output end of the fear circuit: its lateral part gates the medial part, which projects to the ventrolateral PAG and makes the animal freeze. Bumps a wall and it spikes; sits high while the mouse is out in the exposed centre, and higher still while a predator cue is in the air.',
+    ref: 'Ciocchi et al. 2010; Haubensak et al. 2010',
   },
 
   // ---------------- internal state ----------------
@@ -219,14 +219,14 @@ export const ROLES = {
   MEA: {
     group: 'state',
     short: 'what another mouse means',
-    role: 'Medial amygdala. Where pheromone signals are read for social meaning and routed on to mating or aggression — the decision point between courting and attacking.',
-    ref: 'Li et al. 2017; Hong et al. 2014',
+    role: 'Medial amygdala. Where vomeronasal signals are read for meaning and routed on — the decision point between courting, attacking and getting away. It carries predator odour as well as pheromone: cat smell arrives here and leaves for the defensive hypothalamus.',
+    ref: 'Li et al. 2017; Hong et al. 2014; Papes et al. 2010',
   },
   BST: {
     group: 'state',
     short: 'where male and female differ most',
-    role: 'Bed nucleus of the stria terminalis. One of the most sexually dimorphic structures in the brain: its principal nucleus is markedly larger in males, and the model gives the male a correspondingly stronger response.',
-    ref: 'Bayless et al. 2019',
+    role: 'Bed nucleus of the stria terminalis. One of the most sexually dimorphic structures in the brain: its principal nucleus is markedly larger in males, and the model gives the male a correspondingly stronger response. It is also the sustained-anxiety arm of the defensive system — it tracks a threat that is around somewhere, where the central amygdala tracks one that just happened.',
+    ref: 'Bayless et al. 2019; Walker & Davis 2008',
   },
   MPN: {
     group: 'state',
@@ -236,9 +236,9 @@ export const ROLES = {
   },
   VMH: {
     group: 'state',
-    short: 'female receptivity',
-    role: 'Ventromedial hypothalamus. Its ventrolateral part carries female sexual receptivity, and in males the same region carries aggression — one structure, opposite jobs by sex.',
-    ref: 'Lin et al. 2011; Inoue et al. 2019',
+    short: 'mating, fighting, or fleeing',
+    role: 'Ventromedial hypothalamus, modelled as its two halves. The ventrolateral part carries female sexual receptivity and, in males, aggression — one structure, opposite jobs by sex. The dorsomedial part next to it is the predator-defence node: it answers to cat odour and to a predator heard nearby, and stimulating it alone makes a mouse freeze at low power and bolt at high power with nothing in the cage.',
+    ref: 'Lin et al. 2011; Inoue et al. 2019; Kunwar et al. 2015; Silva et al. 2013',
   },
   PMv: {
     group: 'state',
@@ -257,7 +257,7 @@ export const ROLES = {
   PVH: {
     group: 'state',
     short: 'stress, and oxytocin',
-    role: 'Paraventricular hypothalamus. The stress output — bright light, deep water and collisions all push it up. It is also the source of oxytocin, which is released while nursing and which retunes the mother\'s auditory cortex so that pup calls become salient to her.',
+    role: 'Paraventricular hypothalamus. The stress output: its CRH neurons sit at the top of the HPA axis, so bright light, deep water, collisions and predator cues all push it up, and corticosterone follows minutes later. It is also the source of oxytocin, which is released while nursing and which retunes the mother\'s auditory cortex so that pup calls become salient to her.',
     ref: 'Fuzesi et al. 2016; Marlin et al. 2015',
   },
 };

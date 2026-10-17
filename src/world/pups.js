@@ -20,6 +20,26 @@ const STRAY_DIST = 0.1;       // further than this from the nest counts as astra
 
 const PINK = new THREE.Color(0xe8aeab);
 const FURRY = new THREE.Color(0xb6ada1);
+const COLD = new THREE.Color(0x9fb3c4);        // the pallor of a chilled pup
+
+/**
+ * Hypothermia.
+ *
+ * Newborn mice cannot thermoregulate at all. Isolated C3H pups could not hold a
+ * normal body temperature until about 18 days, and before then neither body size
+ * nor fur growth did much to slow heat loss. Out of the nest a pup simply cools.
+ *
+ * The survival *time* is a deliberate compression, like the 75 s oestrous cycle:
+ * the literature pins down body temperature at 10 and 20 minutes after the dam is
+ * removed, and lethal temperature thresholds, rather than times to death.
+ */
+const CHILL_SECONDS_DAY0 = 60;     // out in the cold, newborn
+const CHILL_SECONDS_DAY13 = 150;   // older pups last longer
+const THERMO_DAY = 18;             // after this they regulate for themselves
+const REWARM = 2.5;                // warming up is faster than cooling down
+const HEAT_SOURCE_R = 0.04;        // a brooding adult is a radiator
+const HUDDLE_R = 0.025;            // pups touching each other halve the loss
+const CARCASS_SECONDS = 90;        // if nobody comes for it
 
 export class Litter {
   constructor(scene, arena) {
@@ -31,6 +51,8 @@ export class Litter {
     this.nest = null;
     this.born = 0;
     this.weaned = 0;
+    this.lost = 0;
+    this.eaten = 0;
     this.seq = 0;
   }
 
@@ -122,6 +144,7 @@ export class Litter {
       id: ++this.seq, mesh: g, mat, halo, body, head,
       x, z, age: 0, heading: Math.random() * Math.PI * 2,
       carried: null, calling: 0, wrig: Math.random() * 6.28, eyes: null,
+      chill: 0, dead: false, deadT: 0,
     };
     this.pups.push(pup);
     return pup;
@@ -134,13 +157,16 @@ export class Litter {
       p.age += dt;
       const days = p.age / DAY;
 
-      if (p.carried) {
+      if (p.dead) {
+        p.mesh.position.set(p.x, PUP_R * 0.55 * p.mesh.scale.x, p.z);
+        p.mesh.rotation.set(0, p.heading, Math.PI / 2.2);
+      } else if (p.carried) {
         // riding in a parent's mouth
         const m = p.carried;
         p.x = m.x + Math.sin(m.heading) * 0.03;
         p.z = m.z + Math.cos(m.heading) * 0.03;
         p.mesh.position.set(p.x, 0.026, p.z);
-      } else {
+      } else if (!p.dead) {
         // helpless wriggling: they cannot really walk until about two weeks
         const mobility = Math.min(1, Math.max(0, (days - 9) / 8));
         const crawl = (0.004 + 0.05 * mobility) * dt;
@@ -159,28 +185,124 @@ export class Litter {
       const scale = 1 + Math.min(1.1, days / 21 * 1.1);
       p.mesh.scale.setScalar(scale);
       const fur = Math.min(1, Math.max(0, (days - 3) / 6));
-      p.mat.color.copy(PINK).lerp(FURRY, fur);
+      p.mat.color.copy(PINK).lerp(FURRY, fur).lerp(COLD, p.dead ? 0.85 : p.chill * 0.8);
       if (!p.eyes && p.age >= EYES_OPEN) this.openEyes(p);
 
-      // out of the nest and cold -> ultrasonic calling
       const fromNest = this.nest ? Math.hypot(p.x - this.nest.x, p.z - this.nest.z) : 0;
       const astray = !p.carried && fromNest > STRAY_DIST;
-      const canSelfRegulate = Math.min(1, Math.max(0, (days - 12) / 6));
-      const want = astray ? (1 - canSelfRegulate * 0.85) : 0;
+
+      // ---- heat balance ----
+      if (!p.dead) {
+        const warm = !astray || p.carried || this.nearAdult(p, carriers);
+        const span = CHILL_SECONDS_DAY0
+          + (CHILL_SECONDS_DAY13 - CHILL_SECONDS_DAY0) * Math.min(1, days / 13);
+        const rate = days >= THERMO_DAY ? 0 : 1 / span;
+        if (warm) {
+          p.chill = Math.max(0, p.chill - rate * REWARM * dt);
+        } else {
+          // huddling with a sibling is thermoregulation in its own right
+          const huddle = this.touchingSibling(p) ? 0.5 : 1;
+          p.chill = Math.min(1, p.chill + rate * huddle * dt);
+        }
+        if (p.chill >= 1) this.die(p, 'cold');
+      }
+
+      // ---- isolation calls ----
+      // Calling rises as the pup cools, peaks around chill 0.5-0.6, then fades as
+      // it goes torpid. A silent pup is in worse trouble than a screaming one.
+      let want = 0;
+      if (astray && !p.dead) {
+        const c = p.chill;
+        const shape = Math.exp(-((c - 0.55) ** 2) / (2 * 0.3 * 0.3));
+        const torpor = 1 - Math.min(1, Math.max(0, (c - 0.75) / 0.25));
+        const canSelfRegulate = Math.min(1, Math.max(0, (days - 12) / 6));
+        want = shape * torpor * (1 - canSelfRegulate * 0.85);
+      }
       p.calling += (want - p.calling) * Math.min(1, dt * 1.6);
       const pulse = 0.5 + 0.5 * Math.sin(t * 11 + p.id);
       p.halo.material.opacity = p.calling * 0.75 * pulse;
       p.halo.scale.setScalar(1 + p.calling * pulse * 0.7);
 
+      // a carcass nobody collects eventually goes
+      if (p.dead) {
+        p.deadT += dt;
+        if (p.deadT > CARCASS_SECONDS) { this.remove(p, i); continue; }
+      }
+
       // weaned: they leave the nest for good
-      if (p.age > WEANING) {
-        this.group.remove(p.mesh);
-        p.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
-        this.pups.splice(i, 1);
+      if (!p.dead && p.age > WEANING) {
+        this.remove(p, i);
         this.weaned++;
         if (this.onWean) this.onWean(p);
       }
     }
+  }
+
+  /** detach a pup from the scene and the list */
+  remove(p, i) {
+    this.group.remove(p.mesh);
+    p.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    const at = i !== undefined && this.pups[i] === p ? i : this.pups.indexOf(p);
+    if (at >= 0) this.pups.splice(at, 1);
+  }
+
+  /** is a live adult close enough to be a heat source? */
+  nearAdult(p, carriers) {
+    if (!carriers) return false;
+    for (const a of carriers) {
+      const m = a.mouse || a;
+      if (!m || (a.brain && a.brain.alive === false)) continue;
+      if (Math.hypot(m.x - p.x, m.z - p.z) < HEAT_SOURCE_R) return true;
+    }
+    return false;
+  }
+
+  /** pups in contact lose heat more slowly than a pup on its own */
+  touchingSibling(p) {
+    for (const q of this.pups) {
+      if (q === p || q.dead || q.carried) continue;
+      if (Math.hypot(q.x - p.x, q.z - p.z) < HUDDLE_R) return true;
+    }
+    return false;
+  }
+
+  /** @param cause 'cold' | 'killed' */
+  die(p, cause) {
+    if (p.dead) return;
+    p.dead = true;
+    p.deadT = 0;
+    p.calling = 0;
+    p.carried = null;
+    p.halo.material.opacity = 0;
+    this.lost++;
+    if (this.onPupLost) this.onPupLost(p, cause);
+  }
+
+  /** male infanticide: the decision is the caller's, the mechanics are here */
+  killPup(p) { this.die(p, 'killed'); }
+
+  /**
+   * An adult eats a carcass. Filmed dams losing whole litters were not seen to
+   * kill pups: what looks like maternal infanticide is mostly a female consuming
+   * a pup that had already died of cold or starvation.
+   */
+  consume(p, byAgent) {
+    if (!p || !p.dead) return false;
+    this.remove(p);
+    this.eaten++;
+    if (this.onPupEaten) this.onPupEaten(p, byAgent);
+    return true;
+  }
+
+  /** the nearest carcass to a point, for an adult to collect */
+  nearestCarcass(x, z) {
+    let best = null, bd = 1e9;
+    for (const p of this.pups) {
+      if (!p.dead) continue;
+      const d = Math.hypot(p.x - x, p.z - z);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best ? { pup: best, dist: bd } : null;
   }
 
   openEyes(p) {
@@ -200,7 +322,7 @@ export class Litter {
   callLevel(x, z) {
     let v = 0;
     for (const p of this.pups) {
-      if (p.calling < 0.05 || p.carried) continue;
+      if (p.calling < 0.05 || p.carried || p.dead) continue;
       const d = Math.hypot(p.x - x, p.z - z);
       v = Math.max(v, p.calling * Math.max(0, 1 - d / CALL_RANGE));
     }
@@ -211,6 +333,7 @@ export class Litter {
   nearLevel(x, z) {
     let v = 0;
     for (const p of this.pups) {
+      if (p.dead) continue;
       const d = Math.hypot(p.x - x, p.z - z);
       v = Math.max(v, Math.max(0, 1 - d / 0.2));
     }
@@ -221,7 +344,7 @@ export class Litter {
   nearestStray(x, z) {
     let best = null, bd = 1e9;
     for (const p of this.pups) {
-      if (p.carried || !this.nest) continue;
+      if (p.carried || p.dead || !this.nest) continue;
       if (Math.hypot(p.x - this.nest.x, p.z - this.nest.z) <= STRAY_DIST) continue;
       const d = Math.hypot(p.x - x, p.z - z);
       if (d < bd) { bd = d; best = p; }
@@ -255,8 +378,14 @@ export class Litter {
     return this.pups.find((p) => p.mesh === o) || null;
   }
 
-  get count() { return this.pups.length; }
-  get strays() { return this.pups.filter((p) => !p.carried && !this.inNest(p)).length; }
+  /** live pups; a carcass is no longer something to care for */
+  get count() { return this.pups.reduce((n, p) => n + (p.dead ? 0 : 1), 0); }
+  get carcasses() { return this.pups.filter((p) => p.dead); }
+  get strays() {
+    return this.pups.filter((p) => !p.dead && !p.carried && !this.inNest(p)).length;
+  }
+  /** worst chill among the live pups, for a readout */
+  get coldest() { return this.pups.reduce((m, p) => (p.dead ? m : Math.max(m, p.chill)), 0); }
   /** age of the litter in simulated days */
   get days() { return this.pups.length ? this.pups[0].age / DAY : 0; }
 
@@ -268,7 +397,7 @@ export class Litter {
     this.pups.length = 0;
     if (this.nestMesh) { this.group.remove(this.nestMesh); this.nestMesh = null; }
     this.nest = null;
-    this.born = 0; this.weaned = 0;
+    this.born = 0; this.weaned = 0; this.lost = 0; this.eaten = 0;
   }
 }
 

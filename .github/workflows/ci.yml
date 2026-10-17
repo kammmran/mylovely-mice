@@ -1,0 +1,44 @@
+# What there is to check without a build step or a test runner.
+#
+# The simulator has no dependencies and no bundler, so CI's job is to catch the
+# things that would otherwise only show up as a blank page in a browser: a
+# syntax error in a module, an import that points at a file that is not there,
+# and a data file that does not parse.
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: parse every module
+        run: |
+          shopt -s globstar
+          for f in src/**/*.js; do
+            node --check "$f" || exit 1
+          done
+          echo "all modules parse"
+
+      - name: every local import resolves
+        run: node .github/scripts/check-imports.mjs
+
+      - name: data files parse
+        run: |
+          for f in data/*.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" \
+              && echo "ok  $f ($(du -h "$f" | cut -f1))" || exit 1
+          done
+
+      - name: the page references files that exist
+        run: node .github/scripts/check-page.mjs

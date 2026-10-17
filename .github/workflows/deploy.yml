@@ -1,0 +1,45 @@
+# Publish the simulator to GitHub Pages.
+#
+# There is nothing to build: the page is plain ES modules and loads three.js
+# from a CDN, so the whole repository is the artifact. The only thing this has
+# to get right is that the data files ship with it — the Allen CCF meshes and
+# the connectivity matrix are fetched at runtime by relative path.
+name: deploy to github pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# one deployment at a time; a newer push supersedes a running one rather than
+# queueing behind it
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Jekyll would otherwise swallow any path beginning with an underscore
+      - name: disable jekyll
+        run: touch .nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

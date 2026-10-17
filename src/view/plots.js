@@ -89,9 +89,9 @@ export class Raster {
     this.bands = [
       ['mob', 'MOB', 4], ['whisk', 'SSp-bfd', 3], ['v1', 'VISp', 3],
       ['place', 'CA1', 12], ['grid', 'ENTm', 10], ['hd', 'POST', 8], ['border', 'SUB', 8], ['ca3', 'CA3', 4],
-      ['mop', 'MOp', 4], ['mos', 'MOs', 3], ['cb', 'CB', 3],
-      ['vta', 'VTA', 4], ['acb', 'ACB', 3],
-      ['arh', 'ARH', 3], ['lha', 'LHA', 3],
+      ['mop', 'MOp', 4], ['mos', 'MOs', 3], ['cb', 'CB', 3], ['pag', 'PAG', 3],
+      ['vta', 'VTA', 4], ['acb', 'ACB', 3], ['cea', 'CEA', 3],
+      ['arh', 'ARH', 3], ['lha', 'LHA', 3], ['vmhdm', 'VMHdm', 3],
     ];
     this.totalRows = this.bands.reduce((a, b) => a + b[2], 0);
     // spikes seen since the last column was committed, so that nothing is

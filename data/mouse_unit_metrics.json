@@ -1,0 +1,668 @@
+{
+ "source": "Allen Brain Observatory - Visual Coding Neuropixels",
+ "reference": "Siegle et al. 2021, Nature 592:86-92",
+ "url": "https://allen-brain-observatory.s3.us-west-2.amazonaws.com/visual-coding-neuropixels/ecephys-cache/",
+ "method": "units.csv joined to channels.csv on ecephys_channel_id; Allen quality=='good' only; structures with >=25 units",
+ "note": "Recorded during visual behaviour, so these are task//state-specific baselines, not universal constants.",
+ "units_analysed": 99120,
+ "regions": {
+  "grey": {
+   "n_units": 10104,
+   "firing_rate_hz": {
+    "median": 3.692,
+    "mean": 6.001,
+    "p25": 0.823,
+    "p75": 7.971,
+    "p95": 19.713,
+    "max": 115.49
+   },
+   "waveform_duration_ms_median": 0.5494,
+   "fast_spiking_fraction": 0.254,
+   "modelled": false
+  },
+  "VISpm": {
+   "n_units": 4215,
+   "firing_rate_hz": {
+    "median": 2.714,
+    "mean": 4.16,
+    "p25": 0.945,
+    "p75": 5.447,
+    "p95": 13.309,
+    "max": 59.49
+   },
+   "waveform_duration_ms_median": 0.6593,
+   "fast_spiking_fraction": 0.136,
+   "modelled": false
+  },
+  "VISp": {
+   "n_units": 8603,
+   "firing_rate_hz": {
+    "median": 2.485,
+    "mean": 4.15,
+    "p25": 1.035,
+    "p75": 5.198,
+    "p95": 13.836,
+    "max": 79.43
+   },
+   "waveform_duration_ms_median": 0.6044,
+   "fast_spiking_fraction": 0.167,
+   "modelled": true
+  },
+  "VISl": {
+   "n_units": 4935,
+   "firing_rate_hz": {
+    "median": 2.663,
+    "mean": 4.064,
+    "p25": 1.198,
+    "p75": 5.102,
+    "p95": 12.94,
+    "max": 69.69
+   },
+   "waveform_duration_ms_median": 0.6593,
+   "fast_spiking_fraction": 0.128,
+   "modelled": false
+  },
+  "VISal": {
+   "n_units": 6466,
+   "firing_rate_hz": {
+    "median": 2.65,
+    "mean": 4.172,
+    "p25": 1.034,
+    "p75": 5.238,
+    "p95": 13.677,
+    "max": 57.54
+   },
+   "waveform_duration_ms_median": 0.6456,
+   "fast_spiking_fraction": 0.158,
+   "modelled": false
+  },
+  "VISrl": {
+   "n_units": 6013,
+   "firing_rate_hz": {
+    "median": 2.752,
+    "mean": 4.745,
+    "p25": 1.019,
+    "p75": 6.166,
+    "p95": 16.121,
+    "max": 61.06
+   },
+   "waveform_duration_ms_median": 0.6318,
+   "fast_spiking_fraction": 0.164,
+   "modelled": false
+  },
+  "MB": {
+   "n_units": 487,
+   "firing_rate_hz": {
+    "median": 4.042,
+    "mean": 8.772,
+    "p25": 1.132,
+    "p75": 11.827,
+    "p95": 33.727,
+    "max": 81.87
+   },
+   "waveform_duration_ms_median": 0.261,
+   "fast_spiking_fraction": 0.848,
+   "modelled": false
+  },
+  "SCig": {
+   "n_units": 353,
+   "firing_rate_hz": {
+    "median": 4.786,
+    "mean": 8.718,
+    "p25": 1.44,
+    "p75": 10.589,
+    "p95": 33.116,
+    "max": 81.72
+   },
+   "waveform_duration_ms_median": 0.2335,
+   "fast_spiking_fraction": 0.972,
+   "modelled": false
+  },
+  "DG": {
+   "n_units": 5832,
+   "firing_rate_hz": {
+    "median": 1.633,
+    "mean": 3.669,
+    "p25": 0.129,
+    "p75": 4.772,
+    "p95": 14.438,
+    "max": 57.81
+   },
+   "waveform_duration_ms_median": 0.5494,
+   "fast_spiking_fraction": 0.299,
+   "modelled": true
+  },
+  "CA1": {
+   "n_units": 17104,
+   "firing_rate_hz": {
+    "median": 2.87,
+    "mean": 4.471,
+    "p25": 0.824,
+    "p75": 5.832,
+    "p95": 14.743,
+    "max": 98.84
+   },
+   "waveform_duration_ms_median": 0.7005,
+   "fast_spiking_fraction": 0.147,
+   "modelled": true
+  },
+  "VISam": {
+   "n_units": 6198,
+   "firing_rate_hz": {
+    "median": 2.816,
+    "mean": 4.658,
+    "p25": 1.112,
+    "p75": 5.915,
+    "p95": 15.524,
+    "max": 88.62
+   },
+   "waveform_duration_ms_median": 0.6318,
+   "fast_spiking_fraction": 0.162,
+   "modelled": false
+  },
+  "LP": {
+   "n_units": 4849,
+   "firing_rate_hz": {
+    "median": 5.4,
+    "mean": 6.459,
+    "p25": 2.818,
+    "p75": 8.607,
+    "p95": 15.484,
+    "max": 66.88
+   },
+   "waveform_duration_ms_median": 0.5219,
+   "fast_spiking_fraction": 0.175,
+   "modelled": false
+  },
+  "VIS": {
+   "n_units": 2169,
+   "firing_rate_hz": {
+    "median": 2.608,
+    "mean": 4.167,
+    "p25": 0.766,
+    "p75": 5.342,
+    "p95": 14.573,
+    "max": 50.74
+   },
+   "waveform_duration_ms_median": 0.6456,
+   "fast_spiking_fraction": 0.136,
+   "modelled": false
+  },
+  "LGv": {
+   "n_units": 475,
+   "firing_rate_hz": {
+    "median": 5.957,
+    "mean": 9.552,
+    "p25": 1.634,
+    "p75": 12.112,
+    "p95": 35.939,
+    "max": 72.13
+   },
+   "waveform_duration_ms_median": 0.3022,
+   "fast_spiking_fraction": 0.68,
+   "modelled": false
+  },
+  "CA3": {
+   "n_units": 3148,
+   "firing_rate_hz": {
+    "median": 1.945,
+    "mean": 4.655,
+    "p25": 0.185,
+    "p75": 5.582,
+    "p95": 20.765,
+    "max": 70.25
+   },
+   "waveform_duration_ms_median": 0.673,
+   "fast_spiking_fraction": 0.199,
+   "modelled": true
+  },
+  "APN": {
+   "n_units": 3841,
+   "firing_rate_hz": {
+    "median": 4.728,
+    "mean": 9.827,
+    "p25": 1.527,
+    "p75": 12.42,
+    "p95": 39.035,
+    "max": 88.83
+   },
+   "waveform_duration_ms_median": 0.261,
+   "fast_spiking_fraction": 0.772,
+   "modelled": false
+  },
+  "POL": {
+   "n_units": 540,
+   "firing_rate_hz": {
+    "median": 5.35,
+    "mean": 8.1,
+    "p25": 1.987,
+    "p75": 10.111,
+    "p95": 30.027,
+    "max": 61.74
+   },
+   "waveform_duration_ms_median": 0.467,
+   "fast_spiking_fraction": 0.469,
+   "modelled": false
+  },
+  "LGd": {
+   "n_units": 2582,
+   "firing_rate_hz": {
+    "median": 7.532,
+    "mean": 8.484,
+    "p25": 3.955,
+    "p75": 11.592,
+    "p95": 19.316,
+    "max": 66.15
+   },
+   "waveform_duration_ms_median": 0.467,
+   "fast_spiking_fraction": 0.141,
+   "modelled": true
+  },
+  "HPF": {
+   "n_units": 122,
+   "firing_rate_hz": {
+    "median": 5.173,
+    "mean": 7.618,
+    "p25": 2.325,
+    "p75": 9.535,
+    "p95": 22.86,
+    "max": 49.05
+   },
+   "waveform_duration_ms_median": 0.5769,
+   "fast_spiking_fraction": 0.213,
+   "modelled": false
+  },
+  "PPT": {
+   "n_units": 125,
+   "firing_rate_hz": {
+    "median": 5.04,
+    "mean": 10.816,
+    "p25": 1.464,
+    "p75": 14.844,
+    "p95": 34.209,
+    "max": 63.13
+   },
+   "waveform_duration_ms_median": 0.261,
+   "fast_spiking_fraction": 0.888,
+   "modelled": false
+  },
+  "NOT": {
+   "n_units": 537,
+   "firing_rate_hz": {
+    "median": 5.941,
+    "mean": 9.37,
+    "p25": 2.579,
+    "p75": 10.998,
+    "p95": 32.56,
+    "max": 74.57
+   },
+   "waveform_duration_ms_median": 0.3296,
+   "fast_spiking_fraction": 0.717,
+   "modelled": false
+  },
+  "SUB": {
+   "n_units": 1938,
+   "firing_rate_hz": {
+    "median": 5.926,
+    "mean": 8.192,
+    "p25": 2.63,
+    "p75": 11.373,
+    "p95": 23.197,
+    "max": 87.92
+   },
+   "waveform_duration_ms_median": 0.5631,
+   "fast_spiking_fraction": 0.185,
+   "modelled": true
+  },
+  "ProS": {
+   "n_units": 1522,
+   "firing_rate_hz": {
+    "median": 4.173,
+    "mean": 6.022,
+    "p25": 1.797,
+    "p75": 8.129,
+    "p95": 18.382,
+    "max": 56.99
+   },
+   "waveform_duration_ms_median": 0.5769,
+   "fast_spiking_fraction": 0.133,
+   "modelled": false
+  },
+  "TH": {
+   "n_units": 539,
+   "firing_rate_hz": {
+    "median": 5.559,
+    "mean": 7.178,
+    "p25": 1.902,
+    "p75": 10.109,
+    "p95": 19.794,
+    "max": 85.26
+   },
+   "waveform_duration_ms_median": 0.4533,
+   "fast_spiking_fraction": 0.395,
+   "modelled": false
+  },
+  "PO": {
+   "n_units": 549,
+   "firing_rate_hz": {
+    "median": 6.643,
+    "mean": 7.633,
+    "p25": 3.849,
+    "p75": 9.904,
+    "p95": 17.041,
+    "max": 45.9
+   },
+   "waveform_duration_ms_median": 0.5631,
+   "fast_spiking_fraction": 0.087,
+   "modelled": false
+  },
+  "VISmma": {
+   "n_units": 768,
+   "firing_rate_hz": {
+    "median": 2.565,
+    "mean": 3.76,
+    "p25": 0.869,
+    "p75": 5.228,
+    "p95": 11.75,
+    "max": 41.6
+   },
+   "waveform_duration_ms_median": 0.6593,
+   "fast_spiking_fraction": 0.133,
+   "modelled": false
+  },
+  "Eth": {
+   "n_units": 478,
+   "firing_rate_hz": {
+    "median": 5.764,
+    "mean": 6.601,
+    "p25": 3.299,
+    "p75": 8.753,
+    "p95": 13.162,
+    "max": 74.16
+   },
+   "waveform_duration_ms_median": 0.5906,
+   "fast_spiking_fraction": 0.119,
+   "modelled": false
+  },
+  "PoT": {
+   "n_units": 32,
+   "firing_rate_hz": {
+    "median": 7.416,
+    "mean": 8.61,
+    "p25": 4.777,
+    "p75": 10.983,
+    "p95": 21.06,
+    "max": 23.89
+   },
+   "waveform_duration_ms_median": 0.5631,
+   "fast_spiking_fraction": 0.156,
+   "modelled": false
+  },
+  "MGd": {
+   "n_units": 463,
+   "firing_rate_hz": {
+    "median": 6.605,
+    "mean": 7.287,
+    "p25": 2.671,
+    "p75": 10.712,
+    "p95": 18.493,
+    "max": 28.54
+   },
+   "waveform_duration_ms_median": 0.467,
+   "fast_spiking_fraction": 0.153,
+   "modelled": false
+  },
+  "SGN": {
+   "n_units": 695,
+   "firing_rate_hz": {
+    "median": 5.794,
+    "mean": 6.883,
+    "p25": 3.089,
+    "p75": 9.339,
+    "p95": 16.975,
+    "max": 63.61
+   },
+   "waveform_duration_ms_median": 0.4807,
+   "fast_spiking_fraction": 0.106,
+   "modelled": false
+  },
+  "CA2": {
+   "n_units": 156,
+   "firing_rate_hz": {
+    "median": 2.917,
+    "mean": 5.731,
+    "p25": 0.644,
+    "p75": 6.792,
+    "p95": 25.947,
+    "max": 44.79
+   },
+   "waveform_duration_ms_median": 0.6593,
+   "fast_spiking_fraction": 0.192,
+   "modelled": false
+  },
+  "VISli": {
+   "n_units": 658,
+   "firing_rate_hz": {
+    "median": 2.598,
+    "mean": 3.895,
+    "p25": 1.27,
+    "p75": 5.163,
+    "p95": 12.679,
+    "max": 27.98
+   },
+   "waveform_duration_ms_median": 0.6593,
+   "fast_spiking_fraction": 0.131,
+   "modelled": false
+  },
+  "ZI": {
+   "n_units": 115,
+   "firing_rate_hz": {
+    "median": 3.988,
+    "mean": 5.932,
+    "p25": 1.661,
+    "p75": 6.559,
+    "p95": 22.946,
+    "max": 34.26
+   },
+   "waveform_duration_ms_median": 0.3022,
+   "fast_spiking_fraction": 0.809,
+   "modelled": false
+  },
+  "IntG": {
+   "n_units": 124,
+   "firing_rate_hz": {
+    "median": 3.742,
+    "mean": 6.187,
+    "p25": 1.663,
+    "p75": 7.87,
+    "p95": 17.273,
+    "max": 58.86
+   },
+   "waveform_duration_ms_median": 0.4121,
+   "fast_spiking_fraction": 0.427,
+   "modelled": false
+  },
+  "IGL": {
+   "n_units": 139,
+   "firing_rate_hz": {
+    "median": 5.672,
+    "mean": 9.465,
+    "p25": 2.491,
+    "p75": 10.365,
+    "p95": 33.267,
+    "max": 87.69
+   },
+   "waveform_duration_ms_median": 0.4121,
+   "fast_spiking_fraction": 0.496,
+   "modelled": false
+  },
+  "VPM": {
+   "n_units": 597,
+   "firing_rate_hz": {
+    "median": 7.925,
+    "mean": 8.84,
+    "p25": 3.844,
+    "p75": 12.419,
+    "p95": 20.529,
+    "max": 45.87
+   },
+   "waveform_duration_ms_median": 0.4807,
+   "fast_spiking_fraction": 0.251,
+   "modelled": false
+  },
+  "VL": {
+   "n_units": 34,
+   "firing_rate_hz": {
+    "median": 2.151,
+    "mean": 5.17,
+    "p25": 0.106,
+    "p75": 4.688,
+    "p95": 24.035,
+    "max": 35.89
+   },
+   "waveform_duration_ms_median": 0.673,
+   "fast_spiking_fraction": 0.176,
+   "modelled": false
+  },
+  "MGm": {
+   "n_units": 189,
+   "firing_rate_hz": {
+    "median": 4.25,
+    "mean": 6.345,
+    "p25": 1.636,
+    "p75": 8.971,
+    "p95": 20.117,
+    "max": 32.35
+   },
+   "waveform_duration_ms_median": 0.4533,
+   "fast_spiking_fraction": 0.312,
+   "modelled": false
+  },
+  "OP": {
+   "n_units": 66,
+   "firing_rate_hz": {
+    "median": 5.52,
+    "mean": 9.897,
+    "p25": 2.188,
+    "p75": 10.916,
+    "p95": 30.573,
+    "max": 58.86
+   },
+   "waveform_duration_ms_median": 0.2747,
+   "fast_spiking_fraction": 0.939,
+   "modelled": false
+  },
+  "MGv": {
+   "n_units": 673,
+   "firing_rate_hz": {
+    "median": 5.055,
+    "mean": 6.371,
+    "p25": 2.176,
+    "p75": 9.311,
+    "p95": 15.912,
+    "max": 59.8
+   },
+   "waveform_duration_ms_median": 0.467,
+   "fast_spiking_fraction": 0.181,
+   "modelled": false
+  },
+  "MRN": {
+   "n_units": 44,
+   "firing_rate_hz": {
+    "median": 6.89,
+    "mean": 11.091,
+    "p25": 1.967,
+    "p75": 15.546,
+    "p95": 37.045,
+    "max": 47.61
+   },
+   "waveform_duration_ms_median": 0.2541,
+   "fast_spiking_fraction": 0.886,
+   "modelled": false
+  },
+  "POST": {
+   "n_units": 39,
+   "firing_rate_hz": {
+    "median": 2.741,
+    "mean": 5.387,
+    "p25": 0.582,
+    "p75": 9.21,
+    "p95": 14.656,
+    "max": 28.48
+   },
+   "waveform_duration_ms_median": 0.4807,
+   "fast_spiking_fraction": 0.436,
+   "modelled": true
+  },
+  "PP": {
+   "n_units": 38,
+   "firing_rate_hz": {
+    "median": 7.138,
+    "mean": 10.301,
+    "p25": 4.006,
+    "p75": 11.57,
+    "p95": 31.005,
+    "max": 48.23
+   },
+   "waveform_duration_ms_median": 0.5494,
+   "fast_spiking_fraction": 0.368,
+   "modelled": false
+  },
+  "PIL": {
+   "n_units": 58,
+   "firing_rate_hz": {
+    "median": 4.442,
+    "mean": 4.71,
+    "p25": 2.173,
+    "p75": 6.647,
+    "p95": 10.786,
+    "max": 15.56
+   },
+   "waveform_duration_ms_median": 0.5494,
+   "fast_spiking_fraction": 0.086,
+   "modelled": false
+  },
+  "SCiw": {
+   "n_units": 93,
+   "firing_rate_hz": {
+    "median": 3.562,
+    "mean": 8.479,
+    "p25": 0.182,
+    "p75": 10.08,
+    "p95": 43.733,
+    "max": 58.21
+   },
+   "waveform_duration_ms_median": 0.2198,
+   "fast_spiking_fraction": 0.903,
+   "modelled": false
+  },
+  "VISmmp": {
+   "n_units": 269,
+   "firing_rate_hz": {
+    "median": 3.662,
+    "mean": 4.653,
+    "p25": 1.389,
+    "p75": 6.369,
+    "p95": 12.503,
+    "max": 42.72
+   },
+   "waveform_duration_ms_median": 0.6593,
+   "fast_spiking_fraction": 0.074,
+   "modelled": false
+  },
+  "LD": {
+   "n_units": 58,
+   "firing_rate_hz": {
+    "median": 4.333,
+    "mean": 4.18,
+    "p25": 2.641,
+    "p75": 5.46,
+    "p95": 7.767,
+    "max": 9.55
+   },
+   "waveform_duration_ms_median": 0.5563,
+   "fast_spiking_fraction": 0.138,
+   "modelled": false
+  }
+ }
+}

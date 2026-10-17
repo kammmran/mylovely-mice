@@ -49,8 +49,42 @@
   kbd{font-family:var(--mono);font-size:10px;background:#0b1118;border:1px solid var(--line2);
     border-bottom-width:2px;border-radius:3px;padding:1px 4px;color:var(--ink2)}
 
+  /* panel visibility */
+  .panel-off{display:none !important}
+
+  .tdiv{width:1px;height:17px;background:var(--line2);margin:0 3px}
+  .menuwrap{position:relative}
+  .menu{
+    position:absolute;right:0;top:calc(100% + 6px);z-index:60;min-width:212px;
+    background:#0e151e;border:1px solid var(--line2);border-radius:8px;padding:6px;
+    box-shadow:0 12px 34px #000a
+  }
+  .menu h6{
+    margin:5px 6px 3px;font-size:8.5px;letter-spacing:.11em;text-transform:uppercase;
+    color:var(--ink3);font-weight:600
+  }
+  .mrow{
+    display:flex;align-items:center;gap:8px;padding:4px 7px;border-radius:5px;
+    cursor:pointer;font-size:11.5px;color:var(--ink2);user-select:none
+  }
+  .mrow:hover{background:#18222e;color:var(--ink)}
+  .mrow .box{
+    width:13px;height:13px;border-radius:3px;border:1px solid var(--line2);flex:none;
+    display:grid;place-items:center;transition:.12s;font-size:9px;color:#06211d;line-height:1
+  }
+  .mrow.on .box{background:var(--accent);border-color:var(--accent)}
+  .mrow .box span{opacity:0;transition:.12s;font-weight:800}
+  .mrow.on .box span{opacity:1}
+  .menu .mfoot{display:flex;gap:5px;margin:7px 4px 2px;border-top:1px solid var(--line);padding-top:7px}
+  .menu .mfoot button{
+    flex:1;font-size:10px;padding:4px;border-radius:5px;cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--ink2)
+  }
+  .menu .mfoot button:hover{color:var(--ink);border-color:var(--accent)}
+
   /* ============================ layout ============================ */
   main{display:grid;grid-template-columns:1fr 414px;min-height:0}
+  body.no-sidebar main{grid-template-columns:1fr}
   #world-pane{position:relative;min-width:0;background:#070a0e}
   #world{display:block;width:100%;height:100%;cursor:crosshair}
 
@@ -99,6 +133,8 @@
   .crow{padding:4px 5px;border-radius:5px;border:1px solid transparent;cursor:pointer;transition:.12s}
   .crow:hover{background:#18222e}
   .crow.me{border-color:var(--accent);background:#10241f}
+  .crow.dead{opacity:.5;filter:grayscale(.7)}
+  .crow.dead .nm{text-decoration:line-through}
   .ctop{display:flex;align-items:center;gap:5px;margin-bottom:3px;min-width:0}
   .ctop .sx{font-size:12px;line-height:1;flex:none}
   .ctop .nm{font-weight:650;font-size:11px;color:var(--ink);white-space:nowrap;flex:none}
@@ -117,6 +153,7 @@
   .rep .stray{color:#d55181}
   .rep .pbar{display:block;height:3px;background:#0b1118;border-radius:2px;margin-top:2px;overflow:hidden}
   .rep .pbar span{display:block;height:100%;background:#e58fb4;border-radius:2px;transition:width .3s}
+  .cmore{font-size:9px;color:var(--ink3);text-align:center;padding:4px 0 2px;font-style:italic}
 
   /* environment + switches */
   #envrow{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:9px;
@@ -147,6 +184,53 @@
   .sw.on .lb{color:var(--ink)}
   .sw .st{margin-left:auto;font-family:var(--mono);font-size:8.5px;color:var(--ink3)}
 
+  /* --- signals panel --- */
+  #signals .sig-sec{margin-bottom:8px}
+  #signals .sig-h{font-size:8.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);
+    margin-bottom:4px;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  #signals .sig-h i{font-style:normal;color:var(--line2);text-transform:none;letter-spacing:0;font-size:8.5px}
+  #signals .sig-sub{font-family:var(--mono);font-size:9px;color:var(--ink3);margin-top:3px;line-height:1.45}
+  #signals .sig-sub b{color:var(--ink2)}
+  #signals .sig-band{display:grid;grid-template-columns:46px 1fr 30px;gap:6px;align-items:center;
+    margin-bottom:2px;cursor:help}
+  #signals .sig-band .bl{font-size:9.5px;color:var(--ink2)}
+  #signals .sig-band .bt{height:5px;background:#0b1118;border-radius:3px;overflow:hidden}
+  #signals .sig-band .bt i{display:block;height:100%;width:0;border-radius:3px;transition:width .2s}
+  #signals .sig-band .bv{font-family:var(--mono);font-size:9px;color:var(--ink3);text-align:right}
+  #signals .sig-auto{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  #signals .sig-auto div{background:#101a26;border:1px solid var(--line);border-radius:5px;padding:4px 6px}
+  #signals .sig-auto label{display:block;font-size:8px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
+  #signals .sig-auto b{font-family:var(--mono);font-size:13px;color:var(--ink)}
+  #signals .sig-auto i{font-style:normal;font-size:8px;color:var(--ink3);margin-left:2px}
+
+  /* --- threats --- */
+  #threats{left:12px;top:92px;width:264px}
+  #thr-sub{margin-left:auto;color:#d55181;text-transform:none;letter-spacing:0;font-size:9px;font-weight:400}
+  #tgrid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+  .tbtn{display:flex;align-items:center;gap:5px;background:#101a26;border:1px solid var(--line2);
+    border-radius:5px;padding:4px 6px;color:var(--ink2);font:inherit;font-size:10px;cursor:pointer;
+    text-align:left;transition:.12s}
+  .tbtn:hover{background:#1b2735;color:var(--ink);border-color:#3a4a5e}
+  .tbtn .ic{font-size:12px;line-height:1;flex:none}
+  .tbtn .tl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tbtn kbd{margin-left:auto}
+  #trow{display:grid;grid-template-columns:1fr auto;gap:4px;margin-top:4px}
+  #trow .tbtn{justify-content:center;font-size:9.5px;color:var(--ink3)}
+  #treact{margin-top:8px;border-top:1px solid var(--line);padding-top:7px}
+  .tstate{font-family:var(--mono);font-size:10.5px;color:var(--ink3);margin-bottom:5px;
+    text-transform:uppercase;letter-spacing:.05em}
+  .tstate.on{color:#d55181}
+  .tbar{display:grid;grid-template-columns:60px 1fr 30px;gap:6px;align-items:center;margin-bottom:3px}
+  .tbar label{font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+  .tbar span{height:5px;background:#0b1118;border-radius:3px;overflow:hidden}
+  .tbar span i{display:block;height:100%;width:0;border-radius:3px;transition:width .2s}
+  .tbar b{font-family:var(--mono);font-size:9px;color:var(--ink2);text-align:right;font-weight:500}
+  #tnum{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+  #tnum div{background:#101a26;border:1px solid var(--line);border-radius:5px;padding:4px 6px}
+  #tnum label{display:block;font-size:8px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
+  #tnum b{font-family:var(--mono);font-size:13px;color:var(--ink)}
+  #tnum i{font-style:normal;font-size:8px;color:var(--ink3);margin-left:3px}
+
   /* --- keys card --- */
   #keys{right:12px;bottom:12px;width:252px}
   #keys .body{font-size:11px;line-height:1.85;color:var(--ink2)}
@@ -158,7 +242,13 @@
   #brain-pane::-webkit-scrollbar-thumb{background:#1d2836;border-radius:5px}
   .pcard{border-bottom:1px solid var(--line);padding:8px 11px 10px}
   .pcard>h4{margin:0 0 7px;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink3);
-    display:flex;justify-content:space-between;align-items:center;gap:8px}
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+    cursor:pointer;border-radius:4px;transition:color .12s}
+  .pcard>h4:hover{color:var(--ink2)}
+  .pcard>h4::after{content:'\25be';font-size:9px;color:var(--line2);transition:transform .18s}
+  .pcard.shut>h4::after{transform:rotate(-90deg)}
+  .pcard.shut>h4{margin-bottom:0}
+  .pcard.shut>*:not(h4){display:none !important}   /* beats the id-based display rules */
   .pcard>h4 em{font-style:normal;color:var(--line2);font-size:9px;letter-spacing:.03em}
   #brain-card{flex:1 1 215px;min-height:200px;display:flex;flex-direction:column;padding-bottom:4px}
   #brain-wrap{position:relative;flex:1;min-height:162px}
@@ -188,6 +278,9 @@
   #insp .meta{font-family:var(--mono);font-size:9.5px;color:var(--ink3);margin-bottom:5px}
   #insp .role{color:var(--ink2)}
   #insp .ref{color:var(--ink3);font-size:10.5px;font-style:italic;margin-top:4px}
+  #insp .conn{font-size:10px;color:var(--ink3);margin-top:4px;font-family:var(--mono);
+    line-height:1.5;overflow:hidden;text-overflow:ellipsis}
+  #insp .conn span{color:var(--line2);display:inline-block;min-width:62px}
   #insp .live{font-family:var(--mono);font-size:10.5px;color:var(--accent);margin-top:6px;
     border-top:1px dashed var(--line2);padding-top:5px}
 
@@ -224,8 +317,10 @@
   .prow .hz{font-family:var(--mono);font-size:9px;color:var(--ink3);text-align:right}
 
   /* ============================ footer ============================ */
-  footer{border-top:1px solid var(--line);background:#0b0f15;display:grid;
-    grid-template-columns:1fr 330px;height:182px}
+  footer{border-top:1px solid var(--line);background:#0b0f15;display:flex;height:182px}
+  #raster-cell{flex:1;min-width:0}
+  #trace-right{flex:0 0 330px}
+  footer.wide-traces #trace-right{flex:1}
   .tcell{position:relative;min-width:0;padding:6px 8px 4px}
   .tcell+.tcell{border-left:1px solid var(--line)}
   .tcell>h4{margin:0 0 3px;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;
@@ -235,7 +330,8 @@
   .tcell>h4 .lg s{width:7px;height:7px;border-radius:2px;text-decoration:none;display:inline-block}
   .tcell>h4 .q{margin-left:auto;color:var(--line2);cursor:help;font-size:10px}
   .tcell canvas{display:block;width:100%;height:calc(100% - 16px)}
-  #trace-right{display:grid;grid-template-rows:1fr 1fr;padding:0}
+  #trace-right{display:flex;flex-direction:column;padding:0}
+  #trace-right>div{flex:1;min-height:0}
   #trace-right>div{padding:6px 9px 4px;min-height:0}
   #trace-right>div+div{border-top:1px solid var(--line)}
 
@@ -285,6 +381,14 @@
       <button class="btn" id="b-value" title="Paint the floor with how valuable the mouse has learned each spot to be (V)">value map</button>
       <button class="btn on" id="b-trail" title="Show where the mouse has been (T)">trail</button>
       <button class="btn" id="b-auto" title="Let the mouse forage by itself (O)">autopilot</button>
+      <span class="tdiv"></span>
+      <div class="menuwrap">
+        <button class="btn" id="b-panels" title="Show or hide any panel">panels ▾</button>
+        <div class="menu" id="panel-menu" hidden></div>
+      </div>
+      <button class="btn" id="b-signals" title="Spectrum, band power, theta-gamma coupling, spike statistics and body signals (B)">signals</button>
+      <button class="btn" id="b-mortality"
+        title="Fighting, infanticide and the causes of death in a mouse colony (N)">mortality</button>
       <button class="btn" id="b-optics" style="display:none"
         title="Express an opsin in a region and stimulate it with light (G)">optogenetics</button>
       <button class="btn" id="b-cue" title="Turn the white cue card. The head-direction compass turns with it - a real finding (M)">rotate cue</button>
@@ -304,7 +408,7 @@
         <div class="badge" id="pos-badge">x <b>0</b> cm &nbsp; y <b>0</b> cm</div>
       </div>
 
-      <div class="float" id="feed">
+      <div class="float" id="feed" data-panel="feed">
         <h5 data-fold>what just happened <span class="tw">▾</span></h5>
         <div class="body">
           <div id="feed-list"><div id="feed-empty">Drive the mouse around — events will appear here.</div></div>
@@ -313,7 +417,7 @@
 
       <div id="scalebar"><div class="bar" style="width:100px"></div>20 cm &nbsp;·&nbsp; arena 120 × 120 cm</div>
 
-      <div class="float" id="colony">
+      <div class="float" id="colony" data-panel="colony">
         <h5 data-fold><span>the colony</span><span id="col-sub"></span><span class="tw">▾</span></h5>
         <div class="body">
           <div id="cgrid"></div>
@@ -333,25 +437,50 @@
               <span class="track"><span class="knob"></span></span><span class="lb">drinking</span><span class="st">on</span></div>
             <div class="sw on" id="b-mate" title="Turn mating off and the mating circuit goes silent — mating becomes impossible">
               <span class="track"><span class="knob"></span></span><span class="lb">mating</span><span class="st">on</span></div>
+            <div class="sw on" id="b-fear" title="Turn defence off and predator cues stop meaning anything: no freezing, no fleeing, no avoidance — which is roughly what a mouse without a working vomeronasal organ does">
+              <span class="track"><span class="knob"></span></span><span class="lb">defence</span><span class="st">on</span></div>
           </div>
         </div>
       </div>
 
-      <div class="float" id="keys">
+      <div class="float" id="threats" data-panel="threats">
+        <h5 data-fold><span>threats</span><span id="thr-sub"></span><span class="tw">▾</span></h5>
+        <div class="body">
+          <div id="tgrid"></div>
+          <div id="trow">
+            <button class="tbtn" id="b-thr-clear" title="Take the odour source out of the arena">clear the source</button>
+            <button class="tbtn" id="b-thr-mute" title="The calls are transposed down: a real one runs well above human hearing">sound: on</button>
+          </div>
+          <div id="treact">
+            <div class="tstate" id="thr-state">nothing to worry about</div>
+            <div class="tbar"><label>fear</label><span><i id="thr-fear"></i></span><b id="thr-fear-v">0%</b></div>
+            <div class="tbar"><label>cortico&shy;sterone</label><span><i id="thr-cort"></i></span><b id="thr-cort-v">0%</b></div>
+            <div id="tnum">
+              <div title="How much of its time it is spending frozen, averaged over about the last 30 seconds — the standard measure of a defensive response"><label>freezing</label><b id="thr-frz">0%</b><i>30 s</i></div>
+              <div title="How much of its time it has spent in the quadrant the odour is in. One quadrant in four, so 25% is chance and anything well below it is avoidance."><label>stim. quadrant</label><b id="thr-quad">—</b><i>25% = chance</i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="float" id="keys" data-panel="keys">
         <h5 data-fold>keys <span class="tw">▾</span></h5>
         <div class="body">
           <b style="color:var(--accent)">Click the floor</b> to send the mouse there<br>
           <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive &nbsp; <kbd>shift</kbd> run<br>
           <kbd>space</kbd> sniff &nbsp; <kbd>X</kbd> swap mouse &nbsp; <kbd>O</kbd> auto<br>
           <kbd>C</kbd> camera &nbsp; <kbd>V</kbd> value &nbsp; <kbd>T</kbd> trail<br>
+          <kbd>B</kbd> signals &nbsp; <kbd>G</kbd> optogenetics<br>
           <kbd>[</kbd><kbd>]</kbd> light &nbsp; <kbd>-</kbd><kbd>=</kbd> water &nbsp; <kbd>M</kbd> cue<br>
+          <kbd>1</kbd>–<kbd>6</kbd> threats &nbsp; <kbd>0</kbd> clear the smell<br>
+          <kbd>N</kbd> fighting &amp; mortality<br>
           <kbd>P</kbd> pause &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>?</kbd> help
         </div>
       </div>
     </section>
 
-    <aside id="brain-pane">
-      <div class="pcard" id="brain-card">
+    <aside id="brain-pane" data-panel="sidebar">
+      <div class="pcard" id="brain-card" data-panel="brain">
         <h4>the brain, live <em>Allen CCFv3</em></h4>
         <div id="brain-wrap">
           <canvas id="brain"></canvas>
@@ -360,17 +489,17 @@
         </div>
       </div>
 
-      <div class="pcard">
+      <div class="pcard" data-panel="busiest">
         <h4>busiest right now <em>click to inspect</em></h4>
         <div id="active-list"></div>
       </div>
 
-      <div class="pcard">
+      <div class="pcard" data-panel="region">
         <h4>about this region</h4>
         <div id="insp"></div>
       </div>
 
-      <div class="pcard">
+      <div class="pcard" data-panel="maps">
         <h4>what the cells have learned <em>built live from spikes</em></h4>
         <div id="maps">
           <div class="mapcard">
@@ -391,7 +520,7 @@
         </div>
       </div>
 
-      <div class="pcard folded" id="pop-card">
+      <div class="pcard folded" id="pop-card" data-panel="regions">
         <h4 id="pop-head" style="cursor:pointer">all 37 regions <em id="pop-tw">show ▸</em></h4>
         <div id="pop-body">
           <div id="chips"></div>
@@ -401,19 +530,19 @@
     </aside>
   </main>
 
-  <footer>
-    <div class="tcell">
+  <footer id="footer">
+    <div class="tcell" id="raster-cell" data-panel="spikes">
       <h4>spikes <span class="lg" id="raster-legend"></span>
         <span class="q" title="Every tick is one simulated neuron firing. Rows are grouped by brain system and scroll right to left.">?</span></h4>
       <canvas id="raster"></canvas>
     </div>
-    <div id="trace-right">
-      <div class="tcell" style="border-left:0">
+    <div id="trace-right" data-panel="traces">
+      <div class="tcell" style="border-left:0" data-panel="waves">
         <h4>brain waves <span class="lg"><i><s style="background:var(--spatial)"></s>theta</i><i><s style="background:#d55181"></s>ripple</i></span>
           <span class="q" title="The hippocampal local field potential. Theta rides along while the mouse moves; pink flashes are sharp-wave ripples, which happen only when it stops.">?</span></h4>
         <canvas id="lfp"></canvas>
       </div>
-      <div class="tcell" style="border-left:0">
+      <div class="tcell" style="border-left:0" data-panel="reward">
         <h4>reward
           <span class="q" title="Top: dopamine neuron firing. Bottom: how valuable the mouse has learned its current spot to be.">?</span></h4>
         <canvas id="da"></canvas>

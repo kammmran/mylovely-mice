@@ -462,19 +462,6 @@ const CSS = `
 #optics>h5 .og-close{margin-left:auto;background:none;border:0;color:var(--ink3,#64788f);
  font-size:13px;line-height:1;cursor:pointer;padding:0 2px}
 #optics>h5 .og-close:hover{color:var(--ink,#e8eef6)}
-/* the launcher: always visible while the card is closed, so the feature is
-   discoverable without knowing the hotkey */
-#optics-launch{position:fixed;left:12px;bottom:12px;z-index:40;display:flex;align-items:center;gap:7px;
- font:600 11px/1 var(--mono,ui-monospace,Menlo,monospace);letter-spacing:.05em;
- color:var(--ink,#e8eef6);background:var(--panel,#111823);border:1px solid var(--accent,#4dd4c0);
- border-radius:7px;padding:8px 11px;cursor:pointer;box-shadow:0 6px 22px #0007;transition:.14s}
-#optics-launch:hover{background:var(--panel2,#151e2a);box-shadow:0 6px 26px #000a,0 0 0 3px #4dd4c022}
-#optics-launch .led{width:9px;height:9px;border-radius:50%;background:var(--accent,#4dd4c0);
- box-shadow:0 0 9px var(--accent,#4dd4c0);animation:og-pulse 1.9s ease-in-out infinite}
-#optics-launch kbd{font:inherit;font-size:9.5px;background:#0b1118;border:1px solid var(--line2,#2a3a4f);
- border-bottom-width:2px;border-radius:3px;padding:2px 5px;color:var(--ink2,#9fb2c8)}
-#optics-launch small{color:var(--ink3,#64788f);font-weight:400;letter-spacing:.02em}
-@keyframes og-pulse{50%{opacity:.35;box-shadow:0 0 2px var(--accent,#4dd4c0)}}
 `;
 
 const PRESETS = [
@@ -544,46 +531,32 @@ export function mountOptics({ getBrain, getBrains, hotkey = 'g', mount } = {}) {
 
   const $ = (id) => card.querySelector('#' + id);
 
-  // A persistent launcher, so the rig is discoverable without knowing the
-  // hotkey: the card starts hidden and this sits in its place.
-  const launch = document.createElement('button');
-  launch.id = 'optics-launch';
-  launch.type = 'button';
-  launch.innerHTML = '<span class="led"></span>optogenetics<kbd>G</kbd>'
-    + '<small>drive the brain</small>';
-  launch.title = 'Express an opsin and stimulate a brain region with light';
-  (mount || document.body).appendChild(launch);
+  // The host app owns the visible entry point: a toolbar button that calls
+  // `optics.open()`. This module supplies the card itself, the hotkey and the
+  // close control; `open()` is public so the button can drive it and read
+  // `#optics` display state to stay in sync.
 
-  // Sit clear of the host's furniture: above the trace footer, and above the
-  // scale bar that occupies the bottom-left of the 3-D view. Measured rather
-  // than hardcoded, so it survives a resize or a change to the layout.
+  // Keep the card clear of the trace footer, measured rather than hardcoded so
+  // it survives a resize or a change to the host layout.
   const seat = () => {
     const footer = document.querySelector('footer');
     const fh = footer ? Math.round(footer.getBoundingClientRect().height) : 0;
-    // sit on the bottom edge of the 3-D view, just right of the scale bar,
-    // which keeps it clear of the event feed above and the traces below
-    const scale = document.querySelector('#scalebar');
-    const left = scale ? Math.round(scale.getBoundingClientRect().right) + 16 : 12;
-    launch.style.left = `${left}px`;
-    launch.style.bottom = `${fh + 10}px`;
     card.style.bottom = `${fh + 12}px`;
     card.style.maxHeight = `min(${Math.max(240, innerHeight - fh - 40)}px, 760px)`;
   };
   seat();
   addEventListener('resize', seat);
-  // the footer can be laid out after we mount, so re-measure once it settles
+  // the footer may be laid out after we mount, so re-measure once it settles
   requestAnimationFrame(seat);
   setTimeout(seat, 400);
 
   // the host's fold handler is delegated, so h5[data-fold] already collapses;
-  // this shows and hides the whole card, swapping it with the launcher
+  // this shows and hides the whole card
   card.style.display = 'none';
   const open = (v) => {
     card.style.display = v ? 'flex' : 'none';
-    launch.style.display = v ? 'none' : 'flex';
     if (v) { refreshRegions(); buildTabs(); }
   };
-  launch.onclick = () => open(true);
   // the close button sits inside h5[data-fold]; don't let it also fold the card
   card.querySelector('.og-close').addEventListener('click', (e) => {
     e.stopPropagation();

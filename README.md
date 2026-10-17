@@ -20,6 +20,20 @@ python3 -m http.server 8000
 
 Three.js is loaded from a CDN, so the first load needs a network connection.
 
+### On GitHub Pages
+
+There is nothing to build, so the repository *is* the site.
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) publishes it on
+every push to `main`. To turn it on once: **Settings → Pages → Build and
+deployment → Source: GitHub Actions**. The page then lives at
+`https://<user>.github.io/mylovely-mice/`.
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and
+pull request. With no bundler and no test runner, it checks the things that
+would otherwise only show up as a blank page: that every module parses, that
+every relative import points at a file that exists, that the data files parse,
+and that `index.html` only references files that are in the repository.
+
 ## Controls
 
 | key | |
@@ -36,7 +50,11 @@ Three.js is loaded from a CDN, so the first load needs a network connection.
 | `M` | rotate the cue card 90° |
 | `[` `]` | arena light |
 | `-` `=` | water level |
+| `B` | the signals panel |
 | `G` | the optogenetics rig |
+| `1`–`6` | frighten them: cat call, owl swoop, noise burst, fox odour, cat collar, rotten smell |
+| `0` | take the odour source away |
+| `N` | fighting & mortality |
 | click a pup | lift it; click again to set it down |
 | `P` `R` `H` | pause, reset, hide help |
 
@@ -51,6 +69,33 @@ Mouse Brain Common Coordinate Framework v3 (CCF 2017) structure meshes, pulled
 from the Allen Institute's own download server and decimated for real-time
 rendering. Region names, structure ids and colours come from the Allen structure
 graph API. The brain you rotate is a real mouse brain.
+
+**The wiring between regions is real too.** `data/mouse_connectivity.json` is
+built from the Allen Mouse Brain Connectivity Atlas (Oh et al. 2014): every number
+is a measured anterograde tracer projection — an rAAV-EGFP injection into one
+structure and the fluorescence found in another — averaged over every experiment
+whose primary injection site was that source, for all 38 modelled regions. The
+populations are wired to each other with those strengths, so activity spreads the
+way it anatomically can and not otherwise. The numbers come out as the textbooks
+describe: CA3 to CA1 is by far the strongest hippocampal link (the Schaffer
+collateral, 19.0), the dentate feeds CA3 (3.99, mossy fibres), entorhinal cortex
+feeds CA1 and dentate (the perforant path), LGd to V1 dominates visual input
+(10.0), and motor and sensory cortex both pour into the striatum (9.1 and 4.3).
+Select any region and the panel shows its strongest measured inputs and outputs.
+
+Tracer data says an axon arrives, not what it does on arrival, so the model adds
+the one thing the anatomy cannot: the striatal and extended-amygdala outputs
+(CP, ACB, CEA, BST) are treated as inhibitory, because those are GABAergic
+projection neurons, and the dopamine cells as modulatory rather than driving.
+
+**Real recorded firing rates are shipped for comparison.**
+`data/mouse_unit_metrics.json` summarises **99,120 sorted neurons** from the Allen
+Brain Observatory Neuropixels survey (Siegle et al. 2021): median firing rate,
+interquartile range and fast-spiking fraction for 47 structures, seven of which
+this model simulates. The signals panel draws the model's current rate directly
+against the recorded distribution for whichever region you have selected, so you
+can see for yourself where it agrees. Measured CA1 median is 2.87 Hz across 17,104
+recorded units; the model sits around 2.2-2.7 Hz while foraging.
 
 **The physiology is reproduced, not replayed.** No spike trains are played back.
 Each population has a tuning curve built to match the published response
@@ -76,6 +121,18 @@ rather than decoration:
 | Pups calling ultrasonically out of the nest, and the mother fetching them | Ehret 2005; Hofer & Shair 1978 |
 | MPOA galanin neurons driving retrieval, oxytocin rising while nursing | Wu 2014; Kohl 2018; Marlin 2015 |
 | Stimulating VMHvl: mounting at low power, attack at high power | Lin et al. 2011 |
+| Freezing to a cat call, and the 4 Hz rhythm that replaces theta while it lasts | Blanchard 1989; Moberly 2018; Bagur 2021 |
+| Escape to the wall within ~250 ms of a shadow expanding overhead | Yilmaz & Meister 2013 |
+| A startle that halves with repetition and comes back after a quiet minute | Koch 1999; Davis 1980 |
+| Avoiding the corner that smells of fox, from the first exposure, without habituating | Fendt 2005 |
+| Cat odour read by the vomeronasal organ: AOB to MeA to VMHdm | Papes 2010; Canteras 2002 |
+| A rotten smell avoided just as strongly, with no freezing and no defensive circuit | Kobayakawa 2007 |
+| A resident attacking a strange male and tolerating a cagemate | NC3Rs; Mertens 2019 |
+| Virgin males killing pups, and stopping once they have mated | vom Saal & Howard 1982 |
+| cMPOA and BSTrh, a millimetre apart, carrying paternal and infanticidal states | Tsuneoka 2015 |
+| Pups chilling out of the nest, and the dam eating the body afterwards | Lagerspetz 1966; Weber & Olsson 2008 |
+| Mortality doubling every 100 days, for a median lifespan near 900 | Mouse Phenome Database |
+| Driving CA3 raises CA1 through the Schaffer collateral, and only CA1 | Allen Connectivity Atlas |
 
 Full per-region descriptions and citations are in
 [`src/neuro/regions.js`](src/neuro/regions.js).
@@ -116,11 +173,162 @@ six weeks, at which point it can breed in turn. Juveniles are marked with their 
 in the colony panel; adults are not. Press `X` to take control of any of them, or
 click one in the panel.
 
-The cage holds eight. Past that, weaned juveniles disperse rather than joining,
-which keeps the simulation honest about space and keeps the frame rate sane.
+The cage holds **100**. Past that, weaned juveniles disperse rather than joining.
+
+Holding a hundred animals needs level of detail, because the honest version does
+not fit in a frame:
+
+- **Bodies.** The articulated rig is 64 meshes, so a hundred of them is 6,400 draw
+  calls. Only the six animals nearest the camera get a rig; the rest run the same
+  locomotion on a stripped body ([`src/world/proxybody.js`](src/world/proxybody.js))
+  and are drawn as one instanced mesh. Agents are swapped between the two as the
+  camera moves, carrying their locomotion state across, so you never see it happen.
+- **Brains.** Every animal keeps its own brain, but at three levels of detail: full
+  for the one you are driving (spike trains, rate maps, 1 kHz field potential),
+  lighter for the rigged few, and drives-only for the rest. Animals nobody is
+  inspecting think at 20 Hz rather than 60.
+- **Measured** with a full colony of 100: **2.97 ms of CPU per frame** and 161-430
+  draw calls, against 17.8 ms and 6,400 for the naive version.
 
 One simulated day is five seconds, so a pregnancy takes about a minute and a half
 and a pup reaches adulthood about three and a half minutes after it is born.
+
+## Signals
+
+Press `B`. Everything in this panel is computed live from the simulated local
+field potential, which is generated at **1 kHz** — a frame-rate signal could not
+represent anything above about 30 Hz, so gamma and ripples would be invisible.
+
+- **Spectrum**, 1&ndash;250 Hz on a log axis, with the standard bands shaded. The
+  theta peak tracks running speed in front of you.
+- **Band power** for delta, theta, beta, slow gamma, fast gamma and ripple, on a
+  dB scale because theta outweighs everything else while the mouse runs. Stop
+  moving and watch delta and the ripple band take over.
+- **Theta&ndash;gamma coupling**, as Tort's modulation index, with slow-gamma
+  amplitude binned by theta phase over two cycles. Slow and fast gamma are
+  generated at *different* theta phases, as they are in CA1 (Colgin et al. 2009),
+  and the analysis recovers that from the signal rather than being told it.
+- **Inter-spike intervals** for the selected region, with the coefficient of
+  variation — around 0.8&ndash;1.0, the irregular, Poisson-like firing real
+  cortical and hippocampal neurons show.
+- **Model vs recorded**, described above.
+- **Body**: heart rate, breathing, pupil diameter and arousal, in real mouse
+  units (heart 500&ndash;740 bpm; quiet breathing 2&ndash;4 Hz rising to ~12 Hz
+  while sniffing; pupil 0.5&ndash;2 mm, which tracks arousal).
+
+## Frightening them
+
+Press `1`–`6`, or use the **threats** panel. Six stimuli, each a standard
+laboratory assay rather than an invention:
+
+| | what it is | what they do about it |
+|---|---|---|
+| `1` cat call | a predator heard nearby, no escape route | freeze |
+| `2` owl swoop | a screech and a dark disc expanding overhead | run for the wall |
+| `3` noise burst | ~105 dB of white noise for 40 ms | startle, then a short freeze |
+| `4` fox odour | trimethylthiazoline on filter paper, in the far corner | risk assessment, then avoidance |
+| `5` cat collar | a collar a cat has worn, in the far corner | the same, through a different nose |
+| `6` rotten smell | something decayed | avoidance, and nothing else |
+
+**Which defence appears is not a free choice.** It follows how close the danger
+is — Fanselow's predatory imminence continuum. A smell in the far corner is
+*potential* danger, and produces risk assessment: the mouse stretches out
+towards it, sniffs, holds station at about 30 cm and goes no closer. A predator
+heard nearby is *post-encounter* danger, and produces freezing: immobile except
+for breathing, for ten seconds or so, and no eating or courting while it lasts.
+Something coming down on top of the animal is *circa-strike* danger, and
+produces flight and nothing else until it is over. These run through different
+columns of the same midbrain structure — the ventrolateral PAG for freezing, the
+dorsolateral for flight — and because those columns inhibit each other, a mouse
+never does both.
+
+**Things worth watching while it happens:**
+
+- **The hippocampus changes rhythm.** Theta stops and the LFP drops to a steady
+  4 Hz, because a freezing mouse breathes at 4 Hz and that rhythm entrains the
+  whole olfactory-limbic network. Sharp-wave ripples stop too: fear-induced
+  immobility is not quiet rest.
+- **Dopamine dips.** An aversive event is negative reinforcement, and the critic
+  reads the same place code the value map does — so turn the value overlay on
+  (`V`) and the corner with the fox odour in it loses its value.
+- **Two smells, two circuits.** The cat collar drives AOB → MeA → VMHdm; the
+  rotten smell drives the olfactory bulb just as hard and leaves VMHdm, the PAG
+  and the central amygdala flat. Avoidance and fear are not the same thing, and
+  the panels show the difference.
+- **Sounds habituate, smells do not.** Press `3` five times in a row and watch
+  the response shrink; the panel reports how much of the first response is left.
+  Press `4` as often as you like and it is as strong as it was.
+- **Fear is catching.** A mouse that can see its cagemate freeze freezes too.
+- **Corticosterone lags.** The behaviour is over in seconds; the slow arm of the
+  stress response is still elevated minutes later, which is what the second bar
+  in the panel is tracking.
+- **The measures are the ones an experimenter would report**: percentage of time
+  spent freezing, and percentage of time spent in the quadrant the stimulus is
+  in, where 25% is chance.
+
+Turning the **defence** switch off in the colony panel silences the circuit:
+the mice still hear the call and still smell the fox, and do nothing about
+either — roughly what an animal with no working vomeronasal organ does when it
+meets a cat.
+
+## Dying
+
+Press `N`, or the **mortality** button. Mice in this colony can be killed and
+can die of their own accord, and every way they can is something that happens
+to real mice.
+
+| cause | how it happens here |
+|---|---|
+| fight wounds | a male bites another male on the rump; a sustained attack on an animal that cannot escape is fatal |
+| infected wounds | the usual way fighting kills — days after the fight, not during it |
+| killed by a male | a male who has not mated kills pups he finds |
+| chilled out of the nest | a pup away from the nest cools and dies |
+| dehydration | days at maximum thirst with no water it can reach |
+| starvation | the same, over weeks rather than days |
+| drowned | a flooded arena with nowhere to climb out |
+| old age | mortality doubling every 100 days, median near 900 |
+
+**A fight is a sequence, not a switch.** Males tail-rattle first, then chase,
+then bite, and the bites land on the rump and the base of the tail — which is
+why a wounded cage mouse is nearly always wounded there. The encounter
+escalates the longer the two stay nose to nose, and it resolves into a
+dominance order: once an animal has lost a few exchanges it submits and keeps
+out of the way. Deaths come from the cases where that cannot happen, which is
+also when they happen in a real facility: nowhere to retreat to, and a
+dominant animal that keeps coming.
+
+**The resident-intruder test** is one button. Put an unfamiliar male into an
+established cage and the resident attacks him; a cagemate of the same age and
+sex is tolerated. Familiarity builds over about a minute here, so the fight is
+in the first few seconds. The resident usually wins, because he is the
+resident.
+
+**Infanticide, and the switch out of it.** A virgin male kills pups. A male
+that has mated does not: the inhibition appears a few days after he mates, is
+in place before his own offspring would be born at 18-20 days, and lifts again
+50-60 days later — a clock that runs without any hormonal or social cue.
+Two nuclei a millimetre apart read out which state he is in, and the model has
+both: **cMPOA** activity means paternal, **BSTrh** means infanticidal, and the
+cMPOA holds the BSTrh down through a GABAergic projection. Lesion the cMPOA in
+a real mouse and a father starts killing pups; lesion the BSTrh and a virgin
+male stops. Watch BSTrh in the raster while a virgin male walks up to a pup,
+then mate him and watch it go quiet.
+
+**What usually kills pups is not that.** Researchers who filmed dams losing
+whole litters found no evidence of pups being killed, and concluded that
+females mostly eat pups that had already died — of cold, out of the nest,
+because a mouse cannot thermoregulate at all before about day 18. So what you
+will mostly see here is a pup chilling while nobody fetches it, and the mother
+eating the body afterwards. That is cannibalism of a dead pup, not infanticide,
+and the distinction is the current argument in the literature rather than a
+detail. A chilling pup calls louder as it cools and then goes quiet as it goes
+torpid, so a silent pup is in more trouble than a screaming one.
+
+Two switches in the panel: **fights can kill** holds the loser above the point
+of recovery without stopping the fighting, and **infanticide** turns pup-killing
+off entirely. Body condition appears as a fourth bar in the colony panel, and
+an animal that cannot find water loses weight visibly before it dies — 20%
+below baseline is the endpoint, which is the number a facility actually uses.
 
 ## Optogenetics
 
@@ -148,12 +356,36 @@ src/world/arena.js      open field, cheese, water dish, floodable water, lightin
 src/world/mouse.js      the mouse rig: articulated body, gait, whisking, autopilot
 src/world/mousedata.js  every physical constant, with units and citations
 src/world/pups.js       the litter: nest, altricial pups, growth, ultrasonic calls
+src/world/threats.js    predator calls, looming shadows, aversive odours
+src/world/mortality.js  fighting, infanticide, and the causes of death
 src/optogenetics.js     opsins, implants, light, region-to-behaviour mapping
 src/view/brainview.js   3-D Allen CCF brain, lit by live firing rate
 src/view/plots.js       spike raster, LFP and dopamine traces, rate maps, polar tuning
 src/view/palette.js     colour parameters (validated for contrast and colour-blindness)
-data/mouse_brain_ccf.json   38 decimated Allen CCFv3 structure meshes
+data/mouse_brain_ccf.json    39 decimated Allen CCFv3 structure meshes
+data/mouse_connectivity.json real tracer projection strengths between them
+data/mouse_unit_metrics.json firing statistics of 99,120 recorded neurons
+src/neuro/signals.js         FFT, Hilbert, band power, phase-amplitude coupling
+src/view/signalspanel.js     the electrophysiology panel
 ```
+
+## Showing and hiding panels
+
+Every panel can be turned off. The **panels** button in the toolbar lists them all,
+grouped by where they live:
+
+- **layout** — the whole side panel
+- **side panel** — the brain, busiest right now, about this region, the tuning
+  maps, all 37 regions
+- **along the bottom** — spike raster, brain waves, reward traces
+- **over the arena** — the colony, what just happened, threats, keys
+
+The layout closes up around whatever you hide: drop the spike raster and the
+traces widen to fill the bottom; hide both and the bottom strip disappears
+entirely; hide the side panel and the arena takes the whole window. **arena only**
+clears everything at once for an unobstructed view, and **show all** brings it
+back. Clicking any card's title rolls it up without removing it. Your choices are
+remembered between visits.
 
 ## Finding your way around
 

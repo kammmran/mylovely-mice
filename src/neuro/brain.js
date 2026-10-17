@@ -44,9 +44,45 @@ export const GESTATION = 19.5 * DAY;   // 19-20 days in C57BL/6
 export const WEANING = 21 * DAY;       // pups weaned at ~3 weeks
 export const EYES_OPEN = 13 * DAY;
 
+/**
+ * How much of a region's activity comes from the regions that anatomically
+ * project to it. Kept modest: the tuning curves are what make each population
+ * mean something, and this is the synaptic context around them.
+ */
+const NET_GAIN = 0.18;
+
+/**
+ * Tracer data records that an axon arrives, not what it does on arrival. Most
+ * long-range projections in the mouse brain are glutamatergic, but the striatal
+ * and extended-amygdala outputs are GABAergic projection neurons, and the
+ * midbrain dopamine cells are neuromodulatory rather than driving.
+ */
+const PROJECTION_SIGN = {
+  CP: -1, ACB: -1, CEA: -1, BST: -1,        // GABAergic projection neurons
+  VTA: 0.35, SNc: 0.35,                     // dopaminergic, modulatory
+};
+
 // ---------------------------------------------------------------- population
+/**
+ * Nothing fires arbitrarily fast. Cortical and hypothalamic cells saturate
+ * around 100-150 Hz; cerebellar Purkinje cells genuinely do run far faster
+ * (simple spikes 50-150 Hz, peaks well above); dopamine cells burst to ~60.
+ */
+const MAX_RATE = { CB: 260, VTA: 70, SNc: 70, 'SSp-bfd': 180, MOB: 160 };
+const MAX_RATE_DEFAULT = 130;
+
+/**
+ * The field potential is generated at 1 kHz rather than once per frame. A
+ * frame-rate signal cannot represent anything above ~30 Hz, so gamma and
+ * ripples would be invisible to any spectrum taken from it.
+ */
+export const LFP_FS = 1000;
+const LFP_N = 2048;            // ~2 s of history
+const ISI_BINS = 100, ISI_BIN_MS = 10;   // intervals out to 1 s
+
 class Population {
   constructor(key, region, label, n, refMax, opts = {}) {
+    this.maxRate = opts.maxRate ?? MAX_RATE[region] ?? MAX_RATE_DEFAULT;
     this.key = key;
     this.region = region;
     this.label = label;
@@ -68,20 +104,39 @@ class Population {
       this.hdMap = new Float32Array(n * HD_BINS);
       this.hd = true;
     }
+    // inter-spike intervals, accumulated the way a spike sorter reports them
+    this.isiHist = new Uint32Array(ISI_BINS);
+    this.lastSpike = new Float32Array(n).fill(-1);
   }
   /** Poisson draw for every cell, given rates already written into this.rate */
-  fire(dt, rnd) {
+  /**
+   * @param spikes draw Poisson spikes (needed for rasters, maps and ISI)
+   * @param timing track inter-spike intervals
+   */
+  fire(dt, rnd, now, spikes = true, timing = true) {
     const s = this.spikes;
     let sum = 0, count = 0, max = 0;
+    const cap = this.maxRate;
     for (let i = 0; i < this.n; i++) {
-      const r = this.rate[i];
+      let r = this.rate[i];
+      if (r > cap) { r = cap; this.rate[i] = cap; }
       sum += r;
       if (r > max) max = r;
+      if (!spikes) continue;
       const p = 1 - Math.exp(-Math.max(0, r) * dt);
       const k = rnd() < p ? 1 : 0;
       s[i] = k;
       count += k;
+      if (k && timing) {
+        const last = this.lastSpike[i];
+        if (last >= 0) {
+          const bin = ((now - last) * 1000 / ISI_BIN_MS) | 0;
+          if (bin >= 0 && bin < ISI_BINS) this.isiHist[bin]++;
+        }
+        this.lastSpike[i] = now;
+      }
     }
+    if (!spikes) s.fill(0);
     this.mean = sum / this.n;
     this.max = max;
     this.smooth += (this.mean - this.smooth) * Math.min(1, dt * 9);
@@ -109,6 +164,9 @@ export class Brain {
     this.lfp = 0;
     this.lfpTheta = 0;
     this.lfpRipple = 0;
+    this.lfpBuf = new Float32Array(LFP_N);
+    this.lfpWrite = 0;
+    this.lfpPhase = { theta: 0, slow: 0, fast: 0, ripple: 0, delta: 0 };
 
     this.sex = sex;            // 'M' or 'F' — several nuclei below are dimorphic
     this.name = name;
@@ -116,7 +174,7 @@ export class Brain {
     // ------------------------------------------------ homeostatic drives
     // Each can be switched off from the panel; off means the circuit is silent
     // and the behaviour it motivates is unavailable.
-    this.drives = { eat: true, drink: true, mate: true };
+    this.drives = { eat: true, drink: true, mate: true, fear: true, fight: true };
     this.hunger = 0.72;        // 0..1 drive
     this.odor = 0;             // odour concentration at the nose
     this.odorPrev = 0;
@@ -140,6 +198,45 @@ export class Brain {
     this.estrous = sex === 'F' ? 0 : 1;
     this.drinkCount = 0;
     this.mateCount = 0;
+
+    // ------------------------------------------------ defensive state
+    // Everything a predator cue sets up. The stimulus itself lives in
+    // src/world/threats.js; this is what the animal makes of it.
+    this.threatSound = 0;      // a predator heard, 0..1
+    this.threatSoundKind = null;
+    this.predatorOdour = 0;    // predator smell at the nose, 0..1
+    this.foulOdour = 0;        // merely unpleasant smell, 0..1
+    this.vnoThreat = 0;        // the part of it the vomeronasal organ reads
+    this.looming = 0;          // something expanding overhead, 0..1
+    this.startle = 0;          // decaying whole-body startle transient
+    this.fear = 0;             // defensive state; outlasts the stimulus
+    this.freeze = 0;           // immobile except for breathing
+    this.flight = 0;           // escape burst
+    this.risk = 0;             // risk assessment: stretched out, sniffing
+    this.cort = 0;             // corticosterone, the slow arm of the response
+    this.aversion = 0;         // how much it wants to be somewhere else, 0..1
+
+    // ------------------------------------------------ fighting and survival
+    this.alive = true;
+    this.causeOfDeath = null;
+    this.health = 1;           // 1 = unmarked; bite wounds take it down
+    this.pain = 0;             // decaying nociceptive transient
+    this.aggression = 0;       // natural aggression, 0..1 (not the opsin kind)
+    this.maternalAgg = 0;      // a lactating female defending the nest
+    this.rivalry = 0;          // another male, close
+    this.infanticide = 0;      // BSTrh drive to kill a pup
+    this.paternal = 0;         // cMPOA inhibition of it, 0..1
+    this.mature = true;
+    this.mode = null;          // which defence is running
+    this.defenseGain = 1;      // 0 when the defence switch is off
+    this.defenseT = 0;         // how much longer it has to run
+    this.threatSource = null;  // where the smell is coming from
+    this.threatDist = Infinity;
+    this.threatBearing = 0;
+    this.threatKind = null;
+    this.freezePct = 0;        // running fraction of time spent frozen
+    this.avoidT = 0;           // time since the source was put down
+    this.avoidIn = 0;          // of which, time spent in its quadrant
 
     // ------------------------------------------------ reproduction
     this.pregnant = false;
@@ -376,9 +473,16 @@ export class Brain {
     P.push(scm);
 
     // ---- periaqueductal grey: arousal / exposure -----------------------
+    // The PAG is not one thing: its ventrolateral column drives freezing and
+    // its dorsolateral column drives flight, and they inhibit each other, which
+    // is why a mouse does one or the other and never both (Tovote et al. 2016).
     const pag = new Population('pag', 'PAG', 'PAG neurons', 16, 10);
     for (let i = 0; i < pag.n; i++) {
-      pag.cells.push({ gs: 0.4 + rnd() * 1.2, gc: 0.4 + rnd() * 1.5, base: 2 + rnd() * 3.5 });
+      pag.cells.push({
+        col: i % 2 ? 'dl' : 'vl',
+        gs: 0.4 + rnd() * 1.2, gc: 0.4 + rnd() * 1.5, gd: 0.6 + rnd() * 1.3,
+        base: 2 + rnd() * 3.5,
+      });
     }
     P.push(pag);
 
@@ -409,7 +513,7 @@ export class Brain {
     P.push(bla);
     const cea = new Population('cea', 'CEA', 'CEA neurons', 12, 8);
     for (let i = 0; i < cea.n; i++) {
-      cea.cells.push({ gb: 0.8 + rnd() * 2.4, gc: 0.4 + rnd() * 1.4, base: 1 + rnd() * 2.5 });
+      cea.cells.push({ gb: 0.8 + rnd() * 2.4, gc: 0.4 + rnd() * 1.4, gt: 0.6 + rnd() * 1.6, base: 1 + rnd() * 2.5 });
     }
     P.push(cea);
 
@@ -443,18 +547,35 @@ export class Brain {
     for (let i = 0; i < aob.n; i++) aob.cells.push({ base: 0.6 + rnd() * 1.8, gain: 0.5 + rnd() * 1.4, ph: rnd() * TAU });
     P.push(aob);
     const mea = new Population('mea', 'MEA', 'MeA neurons', 14, 12);
-    for (let i = 0; i < mea.n; i++) mea.cells.push({ base: 0.8 + rnd() * 2, gp: 0.6 + rnd() * 1.5, gs: 0.4 + rnd() * 1.2 });
+    for (let i = 0; i < mea.n; i++) mea.cells.push({ base: 0.8 + rnd() * 2, gp: 0.6 + rnd() * 1.5, gs: 0.4 + rnd() * 1.2, gt: 0.5 + rnd() * 1.5 });
     P.push(mea);
     // BNST principal nucleus is markedly larger in males (Bayless et al. 2019)
     const bst = new Population('bst', 'BST', 'BNST neurons', 14, 12);
-    for (let i = 0; i < bst.n; i++) bst.cells.push({ base: 0.8 + rnd() * 2, gp: 0.5 + rnd() * 1.3, gd: 0.6 + rnd() * 1.5 });
+    for (let i = 0; i < bst.n; i++) bst.cells.push({ base: 0.8 + rnd() * 2, gp: 0.5 + rnd() * 1.3, gd: 0.6 + rnd() * 1.5, gt: 0.5 + rnd() * 1.4 });
     P.push(bst);
+    // The rhomboid nucleus of the BST, a millimetre from the preoptic cells
+    // above and doing the opposite job. c-Fos in cMPOA and BSTrh tells a
+    // paternal male from an infanticidal one with better than 95% accuracy;
+    // lesion the cMPOA and a father starts killing pups, lesion the BSTrh and
+    // a virgin male stops (Tsuneoka et al. 2015). The cMPOA holds it down
+    // through a GABAergic projection, which is why only one of them is ever up.
+    const brh = new Population('bstrh', 'BST', 'BSTrh neurons', 10, 11, { weight: 0.8 });
+    for (let i = 0; i < brh.n; i++) brh.cells.push({ base: 0.5 + rnd() * 1.4, gain: 0.6 + rnd() * 1.5 });
+    P.push(brh);
+
     const mpn = new Population('mpn', 'MPN', 'Esr1 neurons', 14, 14);
     for (let i = 0; i < mpn.n; i++) mpn.cells.push({ base: 0.5 + rnd() * 1.6, gain: 0.6 + rnd() * 1.6 });
     P.push(mpn);
     const vmh = new Population('vmh', 'VMH', 'VMHvl neurons', 14, 14);
     for (let i = 0; i < vmh.n; i++) vmh.cells.push({ base: 0.5 + rnd() * 1.6, gain: 0.6 + rnd() * 1.6 });
     P.push(vmh);
+    // The other half of VMH. VMHvl above carries mating and aggression; the
+    // dorsomedial part is the predator-defence node, and driving it makes a
+    // mouse freeze at low power and bolt at high power with nothing there.
+    const vmd = new Population('vmhdm', 'VMH', 'VMHdm SF1 neurons', 12, 13, { weight: 0.9 });
+    for (let i = 0; i < vmd.n; i++) vmd.cells.push({ base: 0.6 + rnd() * 1.6, gain: 0.6 + rnd() * 1.5 });
+    P.push(vmd);
+
     const pmv = new Population('pmv', 'PMv', 'PMv neurons', 10, 10);
     for (let i = 0; i < pmv.n; i++) pmv.cells.push({ base: 0.8 + rnd() * 1.8, gain: 0.5 + rnd() * 1.4 });
     P.push(pmv);
@@ -462,7 +583,7 @@ export class Brain {
     // ---- hearing, tuned to the pup-call band (Ehret 2005) --------------
     const audp = new Population('audp', 'AUDp', 'A1 neurons', 16, 14);
     for (let i = 0; i < audp.n; i++) {
-      audp.cells.push({ base: 1.5 + rnd() * 3.5, gain: 0.5 + rnd() * 1.5, pup: 0.4 + rnd() * 1.6 });
+      audp.cells.push({ base: 1.5 + rnd() * 3.5, gain: 0.5 + rnd() * 1.5, pup: 0.4 + rnd() * 1.6, thr: 0.5 + rnd() * 1.7 });
     }
     P.push(audp);
 
@@ -474,6 +595,19 @@ export class Brain {
     for (let i = 0; i < pvh.n; i++) pvh.cells.push({ base: 0.8 + rnd() * 2, gl: 0.5 + rnd() * 1.4, gw: 0.6 + rnd() * 1.6, gb: 0.5 + rnd() * 1.5 });
     P.push(pvh);
 
+    // filled in by setConnectivity()
+    this.afferents = null;
+    this.netDrive = {};
+
+    /**
+     * Detail level. A colony can hold a hundred animals, and only the one being
+     * inspected needs its spike trains, rate maps and kilohertz field potential.
+     *   2 = full   (everything; the animal you are driving)
+     *   1 = lite   (rates and spikes, no maps, no ISI, no 1 kHz LFP)
+     *   0 = drives (rates only, no spike draws — enough to behave correctly)
+     */
+    this.detail = 2;
+
     this.pops = P;
     this.byKey = {};
     for (const p of P) this.byKey[p.key] = p;
@@ -481,6 +615,26 @@ export class Brain {
     // region -> populations
     this.byRegion = {};
     for (const p of P) (this.byRegion[p.region] ||= []).push(p);
+
+    // A stable index per region, so the per-frame network and activation loops
+    // can run over typed arrays instead of allocating from Object.entries().
+    this.regionKeys = Object.keys(this.byRegion);
+    this.regionIndex = {};
+    this.regionKeys.forEach((k, i) => { this.regionIndex[k] = i; });
+    const R = this.regionKeys.length;
+    this.actArr = new Float32Array(R);      // activation, this frame
+    this.prevArr = new Float32Array(R);     // activation, last frame
+    this.netArr = new Float32Array(R);      // synaptic drive in
+    this.regionPops = this.regionKeys.map((k) => this.byRegion[k]);
+    this.regionWeight = new Float32Array(R);
+    this.regionKeys.forEach((k, i) => {
+      this.regionWeight[i] = this.byRegion[k].reduce((a, p) => a + p.weight, 0) || 1;
+    });
+    for (const p of P) p.regionIdx = this.regionIndex[p.region];
+    // flat afferent lists, filled by setConnectivity
+    this.affStart = new Int32Array(R + 1);
+    this.affIdx = new Int32Array(0);
+    this.affW = new Float32Array(0);
 
     // place-cell basis for the value function (envelope only, no theta)
     this.placeEnv = new Float32Array(ca1.n);
@@ -520,16 +674,32 @@ export class Brain {
    */
   update(s, dt) {
     const rnd = this.rnd;
+    if (!this.alive) return this.silence(dt);
     this.t += dt;
+    this.lastSpeed = s.speed;
     const vcm = s.speed * 100;                  // cm/s
     const moving = clamp(vcm / 5, 0, 1);        // 0 at rest, 1 above 5 cm/s
 
+    // ---------------- predator cues, and what to do about them --------
+    // Run before the oscillators: a frightened mouse breathes differently and
+    // its hippocampus runs at a different frequency, and both follow from here.
+    this.updateDefense(s, dt);
+    const frozen = this.freeze;
+
     // ---------------- oscillators -------------------------------------
     // theta frequency rises linearly with running speed (Rivas 1996; Wells 2013)
-    this.thetaFreq = clamp(6.7 + 0.055 * vcm, 6.2, 12);
+    // — except in a frozen mouse, which has a rhythm of its own: a steady ~4 Hz
+    // respiration that entrains a 4 Hz oscillation right across the olfactory
+    // and limbic network (Moberly et al. 2018; Bagur et al. 2021).
+    this.thetaFreq = frozen > 0.4
+      ? 4.0 + 0.5 * (1 - frozen) + 0.02 * vcm
+      : clamp(6.7 + 0.055 * vcm, 6.2, 12);
     this.thetaPhase = (this.thetaPhase + TAU * this.thetaFreq * dt) % TAU;
     // sniffing: ~5 Hz at rest, 8-10 Hz while investigating (Wachowiak 2011)
-    const sniffF = 5 + 4.5 * Math.max(moving, s.cmd.sniff ? 1 : 0);
+    // quiet breathing 2-4 Hz, investigative sniffing up to ~12 Hz (Wachowiak 2011)
+    const sniffF = frozen > 0.4
+      ? 4 + 0.6 * (1 - frozen)                              // the freezing rhythm
+      : 2.6 + 7.2 * Math.max(moving, s.cmd.sniff ? 1 : 0, this.risk);
     this.sniffFreq = sniffF;                 // Hz, read by the body rig
     this.sniffPhase = (this.sniffPhase + TAU * sniffF * dt) % TAU;
     // whisking 8-12 Hz
@@ -549,7 +719,7 @@ export class Brain {
       if (d < nd) { nd = d; nearest = { d, bearing: angDiff(Math.atan2(dx, dz), s.heading) }; }
     }
     odor = clamp(odor, 0, 1.6);
-    this.odorRate = dt > 0 ? (odor - this.odor) / dt : 0;
+    this.odorRate = dt > 0 ? clamp((odor - this.odor) / dt, -8, 8) : 0;
     this.odorPrev = this.odor;
     this.odor = odor;
     this.detect = clamp(odor * 1.5, 0, 1);
@@ -558,6 +728,7 @@ export class Brain {
     // decaying transients
     const dec = (v, tau) => v * Math.exp(-dt / tau);
     this.eating = dec(this.eating, 0.45);
+    this.pain = dec(this.pain, 0.7);
     this.bump = dec(this.bump, 0.3);
     this.orient = dec(this.orient, 0.25);
     if (s.bumped) this.bump = 1;
@@ -660,8 +831,53 @@ export class Brain {
       this.sinceReward = 0;
     }
     /** how strongly this animal is currently motivated to mate, 0..1 */
+    // A frightened mouse does not court: predator odour suppresses sexual
+    // behaviour for as long as it lasts (Kavaliers & Choleris 2001).
     this.mateDrive = (this.drives.mate && !this.pregnant)
-      ? clamp(this.libido * this.estrous * (0.35 + 0.65 * this.bodyCondition), 0, 1) : 0;
+      ? clamp(this.libido * this.estrous * (0.35 + 0.65 * this.bodyCondition)
+              * (1 - 0.85 * this.fear), 0, 1) : 0;
+
+    // ---------------- aggression --------------------------------------
+    // Male mice fight over territory and over females, and in a cage the loser
+    // has nowhere to go. That is why aggression between group-housed males is
+    // a recognised welfare problem rather than a curiosity: somewhere between
+    // 1.5% and 14% of group-housed mice are wounded by a cagemate, nearly all
+    // of them male, and the wounds are concentrated on the rump and the base
+    // of the tail (NC3Rs mouse aggression guidance; Mertens et al. 2019).
+    this.mature = s.mature !== false;
+    const rivalMale = pr && pr.sex === 'M' && this.sex === 'M' && this.mature
+      ? clamp(1 - pr.dist / 0.28, 0, 1) : 0;
+    this.rivalry = rivalMale;
+    // A stranger is attacked where a cagemate is tolerated: this is the whole
+    // basis of the resident-intruder test.
+    const stranger = pr ? 1 - clamp(pr.familiar ?? 1, 0, 1) : 0;
+    let agg = rivalMale * (0.45 + 0.55 * stranger)
+            * (0.8 + 0.2 * clamp(s.crowding ?? 0, 0, 1))   // crowding escalates it
+            * (0.8 + 0.2 * this.libido)                    // competition for mates
+            * (1 - 0.85 * this.fear)                       // a frightened mouse does not attack
+            * (0.6 + 0.4 * this.bodyCondition);            // and nor does a starving one
+    // A lactating female defending the nest is the most aggressive animal in
+    // the cage, and she attacks anything that comes near it.
+    this.maternalAgg = (this.sex === 'F' && this.lactating && pr && pr.dist < 0.3)
+      ? clamp(1.15 * (1 - pr.dist / 0.3) * (0.45 + 0.55 * this.pupsNear), 0, 1) : 0;
+    agg = Math.max(agg, this.maternalAgg);
+    this.aggression = this.drives.fight ? clamp(agg, 0, 1) : 0;
+
+    // ---------------- infanticide, and the switch out of it -------------
+    // A virgin male kills pups; a male that has mated does not. The inhibition
+    // is delayed for days after he mates but is in place before his own
+    // offspring would be born at 18-20 days, and it lifts again 50-60 days
+    // later — a clock that runs without any hormonal or social cue at all
+    // (vom Saal & Howard 1982; Perrigo et al. 1992).
+    const sinceMating = this.matedTimes.length
+      ? (this.t - this.matedTimes[this.matedTimes.length - 1]) / DAY : Infinity;
+    this.paternal = this.sex === 'F' ? 1
+      : (Number.isFinite(sinceMating)
+          ? clamp((sinceMating - 2) / 8, 0, 1) * clamp((60 - sinceMating) / 10, 0, 1)
+          : 0);
+    const pupHere = clamp(s.pupNear ?? 0, 0, 1);
+    this.infanticide = (this.sex === 'M' && this.mature && this.drives.fight)
+      ? clamp((1 - this.paternal) * pupHere * (1 - 0.6 * this.fear), 0, 1) : 0;
 
     // ---------------- trajectory buffer (for replay) -------------------
     this.trajT += dt;
@@ -777,12 +993,17 @@ export class Brain {
     for (let i = 0; i < mob.n; i++) {
       const c = mob.cells[i];
       const g = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(this.sniffPhase + c.ph));
-      mob.rate[i] = c.base + 42 * c.gain * odor * g;
+      mob.rate[i] = c.base + 42 * c.gain * odor * g
+                + 34 * c.gain * (this.predatorOdour + this.foulOdour) * g;
     }
     const pir = this.byKey.pir;
     for (let i = 0; i < pir.n; i++) {
       const c = pir.cells[i];
-      pir.rate[i] = c.base + 14 * c.gain * odor * sniffGate + 26 * c.dgain * Math.max(0, this.odorRate);
+      // the gradient response saturates: piriform cells signal that the smell is
+      // getting stronger, not by how many orders of magnitude
+      pir.rate[i] = c.base + 14 * c.gain * odor * sniffGate
+                  + 9 * c.dgain * Math.tanh(Math.max(0, this.odorRate))
+                  + 13 * c.gain * (this.predatorOdour + this.foulOdour) * sniffGate;
     }
 
     // ---------------- whiskers ---------------------------------------
@@ -814,7 +1035,8 @@ export class Brain {
           drive = Math.exp(-(d * d) / (2 * 0.45 * 0.45)) * cheeseVis;
         }
         const lum = 0.2 + 0.8 * this.light;
-        p.rate[i] = c.base + lum * (7 * c.flow * flow + c.peak * drive);
+        p.rate[i] = c.base + lum * (7 * c.flow * flow + c.peak * drive)
+                  + 20 * this.looming * (0.4 + 0.6 * c.flow);
       }
     }
 
@@ -849,13 +1071,20 @@ export class Brain {
     for (let i = 0; i < scm.n; i++) {
       const c = scm.cells[i];
       const side = nearest ? clamp(c.side * Math.sign(nearest.bearing), 0, 1) : 0;
-      scm.rate[i] = c.base + c.gain * (18 * this.orient * (0.4 + 0.6 * side) + 5 * clamp(Math.abs(s.angVel) / 3, 0, 1));
+      // the deep layers are also where a looming stimulus becomes an escape
+    scm.rate[i] = c.base + c.gain * (18 * this.orient * (0.4 + 0.6 * side)
+                + 5 * clamp(Math.abs(s.angVel) / 3, 0, 1) + 26 * this.looming);
     }
     const pag = this.byKey.pag;
     for (let i = 0; i < pag.n; i++) {
       const c = pag.cells[i];
       pag.rate[i] = c.base + c.gs * 7 * vig + c.gc * 6 * this.centre * (0.4 + 0.8 * this.light)
-                  + 8 * this.bump + 5 * this.waterLevel;
+                  + 8 * this.bump + 5 * this.waterLevel
+                  + (c.col === 'vl'
+                      ? c.gd * 26 * this.freeze
+                      : c.gd * 28 * this.flight + this.defenseGain * 12 * this.looming)
+                  // the lateral column is also where nociception arrives
+                  + 20 * this.pain;
     }
 
     // ---------------- value + dopamine (TD learning) -----------------
@@ -908,13 +1137,17 @@ export class Brain {
     const bla = this.byKey.bla;
     for (let i = 0; i < bla.n; i++) {
       const c = bla.cells[i];
-      bla.rate[i] = c.base + c.gdet * 7 * this.detect + c.geat * 9 * this.eating;
+      // the same structure carries both valences, in different cells
+      bla.rate[i] = c.base + c.gdet * 7 * this.detect + c.geat * 9 * this.eating
+                  + 6 * this.fear;
     }
     const cea = this.byKey.cea;
     for (let i = 0; i < cea.n; i++) {
       const c = cea.cells[i];
       cea.rate[i] = c.base + c.gb * 11 * this.bump + c.gc * 5 * this.centre * (0.35 + 0.95 * this.light)
-                  + 4 * this.waterLevel;
+                  + 4 * this.waterLevel
+                  // CEl -> CEm -> ventrolateral PAG is the freezing output
+                  + c.gt * (17 * this.fear + 11 * this.startle) + 13 * this.pain;
     }
 
     // ---------------- hypothalamus -----------------------------------
@@ -922,8 +1155,9 @@ export class Brain {
     for (let i = 0; i < lha.n; i++) {
       const c = lha.cells[i];
       const feed = this.drives.eat ? 1 : 0;
-      lha.rate[i] = c.base + feed * (c.gh * 9 * this.hunger * this.detect + c.ge * 7 * this.eating)
-                  + 4 * this.drives.drink * this.thirst * this.waterNear;
+      // a frightened mouse stops eating, however hungry it is
+      lha.rate[i] = c.base + (feed * (c.gh * 9 * this.hunger * this.detect + c.ge * 7 * this.eating)
+                  + 4 * this.drives.drink * this.thirst * this.waterNear) * (1 - 0.75 * this.fear);
     }
     // AgRP neurons: scale with hunger, but shut off as soon as food is detected
     const arh = this.byKey.arh;
@@ -959,18 +1193,33 @@ export class Brain {
     for (let i = 0; i < aob.n; i++) {
       const c = aob.cells[i];
       const g = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(this.sniffPhase + c.ph));
-      aob.rate[i] = c.base + 26 * c.gain * this.pheromone * g;
+      // the same organ reads predator proteins; a mouse without it will walk
+      // up to a sedated rat and groom it (Papes et al. 2010)
+      aob.rate[i] = c.base + 26 * c.gain * this.pheromone * g
+                  + 30 * c.gain * this.vnoThreat * g;
     }
     const mea = this.byKey.mea;
     for (let i = 0; i < mea.n; i++) {
       const c = mea.cells[i];
-      mea.rate[i] = c.base + c.gp * 13 * this.pheromone + c.gs * 7 * this.social * (0.3 + 0.7 * md);
+      mea.rate[i] = c.base + c.gp * 13 * this.pheromone + c.gs * 7 * this.social * (0.3 + 0.7 * md)
+                  // the posterodorsal part is also the predator-odour relay,
+                  // and the point where a social cue is routed to attack
+                  + c.gt * (17 * this.vnoThreat + 8 * this.predatorOdour)
+                  + 9 * this.aggression;
     }
     // dimorphic: the BNST principal nucleus is larger and more responsive in males
     const bst = this.byKey.bst, bstDim = male ? 1.35 : 0.7;
     for (let i = 0; i < bst.n; i++) {
       const c = bst.cells[i];
-      bst.rate[i] = c.base + bstDim * (c.gp * 9 * this.pheromone + c.gd * 11 * md);
+      // The BNST is the sustained-anxiety arm: it tracks a threat that is
+      // around somewhere rather than one that just happened (Walker & Davis 2008).
+      bst.rate[i] = c.base + bstDim * (c.gp * 9 * this.pheromone + c.gd * 11 * md)
+                  + c.gt * (14 * this.predatorOdour + 6 * this.fear);
+    }
+    const brh = this.byKey.bstrh;
+    for (let i = 0; i < brh.n; i++) {
+      const c = brh.cells[i];
+      brh.rate[i] = c.base + c.gain * (17 * this.infanticide + 4 * this.rivalry);
     }
     // MPN drives male courtship; VMHvl carries female receptivity
     const mpn = this.byKey.mpn;
@@ -987,8 +1236,18 @@ export class Brain {
     for (let i = 0; i < vmh.n; i++) {
       const c = vmh.cells[i];
       vmh.rate[i] = c.base + c.gain * (male
-        ? (8 * md * this.social + 7 * this.mating)
-        : (14 * md * this.estrous * (0.3 + 0.7 * this.social) + 18 * this.mating));
+        ? (8 * md * this.social + 7 * this.mating + 20 * this.aggression)
+        : (14 * md * this.estrous * (0.3 + 0.7 * this.social) + 18 * this.mating
+           + 16 * this.maternalAgg));
+    }
+    // VMHdm: the predator-defence node, quite separate from the VMHvl cells
+    // above. Stimulating it produces freezing at low power and flight at high
+    // power with no predator present at all (Kunwar et al. 2015; Silva 2013).
+    const vmd = this.byKey.vmhdm;
+    for (let i = 0; i < vmd.n; i++) {
+      const c = vmd.cells[i];
+      vmd.rate[i] = c.base + this.defenseGain * c.gain * (18 * this.predatorOdour
+                  + 15 * this.threatSound + 13 * this.looming + 7 * this.fear);
     }
     const pmv = this.byKey.pmv;
     for (let i = 0; i < pmv.n; i++) {
@@ -1004,7 +1263,8 @@ export class Brain {
     for (let i = 0; i < audp.n; i++) {
       const c = audp.cells[i];
       audp.rate[i] = c.base + c.gain * 4 * (0.3 + 0.7 * moving)
-                   + c.pup * 16 * this.pupCall * oxyGain;
+                   + c.pup * 16 * this.pupCall * oxyGain
+                   + c.thr * 30 * this.threatSound + 26 * this.startle;
     }
 
     // ---------------- light and stress -------------------------------
@@ -1018,18 +1278,221 @@ export class Brain {
       const c = pvh.cells[i];
       pvh.rate[i] = c.base + c.gl * 8 * this.light * (0.3 + 0.7 * this.centre)
                   + c.gw * 9 * this.waterLevel + c.gb * 9 * this.bump
-                  + 13 * this.nursing;        // oxytocin neurons during milk let-down
+                  + 13 * this.nursing         // oxytocin neurons during milk let-down
+                  + 15 * this.fear + 11 * this.pain;   // CRH neurons: the top of the HPA axis
+    }
+
+    // ---------------- synaptic input from connected regions ----------
+    // Applied after every population's own tuning, using last frame's activity
+    // (a one-step delay, which is also what a real synapse imposes).
+    this.computeNetDrive();
+    if (this.affIdx.length) {
+      const net = this.netArr;
+      for (const p of this.pops) {
+        const nd = net[p.regionIdx];
+        if (!nd) continue;
+        const add = NET_GAIN * p.refMax * nd;
+        for (let i = 0; i < p.n; i++) p.rate[i] = Math.max(0, p.rate[i] + add);
+      }
     }
 
     // ---------------- spikes, maps, LFP ------------------------------
+    const detail = this.detail;
     let total = 0;
-    for (const p of this.pops) total += p.fire(dt, rnd);
+    for (const p of this.pops) total += p.fire(dt, rnd, this.t, detail > 0, detail > 1);
     this.spikeRateTotal += (total / dt - this.spikeRateTotal) * Math.min(1, dt * 5);
 
-    this.accumulate(s, dt, rip.active);
-    this.updateLFP(s, dt, moving);
+    if (detail > 1) {
+      this.accumulate(s, dt, rip.active);
+      this.updateLFP(s, dt, moving);
+    } else {
+      this.updateLFPCheap(dt, moving);
+    }
+    this.refreshActivation();
+    this.prevArr.set(this.actArr);
 
     return this;
+  }
+
+  // ----------------------------------------------------------- injury & death
+  /**
+   * A bite lands. Fighting males aim for the rump and the base of the tail,
+   * which is why a wounded cage mouse is nearly always wounded there, and the
+   * wound outlasts the fight by days (NC3Rs; Mertens et al. 2019).
+   */
+  hurt(severity) {
+    if (!this.alive) return;
+    this.pain = clamp(this.pain + severity * 5, 0, 1);
+    this.health = clamp(this.health - severity, 0, 1);
+    this.bump = 1;
+    this.fear = clamp(Math.max(this.fear, 0.5 + 2 * severity), 0, 1);
+    this.rewardKernel -= 0.45;      // and the place it happened loses its value
+    if (this.health <= 0) this.die('fight');
+  }
+
+  /** the brain stops: nothing fires, and the field potential goes flat */
+  die(cause = 'unknown') {
+    if (!this.alive) return;
+    this.alive = false;
+    this.causeOfDeath = cause;
+    this.health = 0;
+    this.fear = this.freeze = this.flight = this.risk = 0;
+    this.aggression = this.maternalAgg = this.infanticide = 0;
+    this.hunger = this.thirst = this.libido = this.mateDrive = 0;
+    this.parentalDrive = 0;
+    this.daRate = 0;
+    this.thetaFreq = 0;
+    this.spikeRateTotal = 0;
+    this.ripple.active = false;
+    this.ripple.env = 0;
+    for (const p of this.pops) {
+      p.rate.fill(0);
+      p.spikes.fill(0);
+      p.mean = p.max = p.smooth = p.smoothMax = p.norm = 0;
+    }
+  }
+
+  /** what a dead brain does with its frame: a flat line, and no spikes */
+  silence(dt) {
+    const steps = Math.max(1, Math.min(96, Math.round(dt * LFP_FS)));
+    for (let k = 0; k < steps; k++) {
+      this.lfpBuf[this.lfpWrite] = 0;
+      this.lfpWrite = (this.lfpWrite + 1) % LFP_N;
+    }
+    this.lfp = this.lfpTheta = this.lfpRipple = 0;
+    for (const p of this.pops) p.spikes.fill(0);
+    return this;
+  }
+
+  // ----------------------------------------------------------- defence
+  /**
+   * What the animal makes of an aversive stimulus, and which defence it runs.
+   *
+   * The choice is not free: it follows how close the danger is, along what
+   * Fanselow called the predatory imminence continuum.
+   *
+   *   potential danger   a smell in the far corner        risk assessment
+   *   post-encounter     a predator heard nearby          freezing
+   *   circa-strike       something coming down on you     flight
+   *
+   * Each has its own output path out of the hypothalamus and midbrain, and the
+   * three are mutually exclusive — a mouse that is fleeing is not freezing.
+   *   Fanselow & Lester 1988; Blanchard & Blanchard 1989; Tovote et al. 2016
+   */
+  updateDefense(s, dt) {
+    const th = s.threat || null;
+    const dec = (v, tau) => v * Math.exp(-dt / tau);
+
+    const sound = th ? clamp(th.sound, 0, 1) : 0;
+    const pred = th ? clamp(th.predatorOdour, 0, 1) : 0;
+    const foul = th ? clamp(th.foulOdour, 0, 1) : 0;
+    const loom = th ? clamp(th.looming, 0, 1) : 0;
+    const socialFreeze = th ? clamp(th.socialFreeze || 0, 0, 1) : 0;
+    const onset = th ? th.onset : null;
+    const imminence = th ? clamp(th.imminence, 0, 1.4) : 0;
+
+    this.threatSound = sound;
+    this.threatSoundKind = th ? th.soundKind : null;
+    this.predatorOdour = pred;
+    this.foulOdour = foul;
+    this.vnoThreat = th ? clamp(th.vno, 0, 1) : 0;
+    this.looming = loom;
+    this.threatSource = th ? th.source : null;
+    this.threatDist = th ? th.sourceDist : Infinity;
+    this.threatBearing = th ? th.sourceBearing : 0;
+    this.startle = Math.max(dec(this.startle, 0.12), th ? th.startle : 0);
+
+    // the avoidance score starts over whenever a new source is put down
+    const kind = th ? th.odourKind : null;
+    if (kind !== this.threatKind) {
+      this.threatKind = kind;
+      this.avoidT = 0;
+      this.avoidIn = 0;
+    }
+
+    // Fear outlasts the stimulus: a two-second call leaves a mouse defensive
+    // for the best part of a minute. Bright light makes everything worse, and
+    // so does watching the other mouse freeze — fear is socially transmitted
+    // (Jeon et al. 2010).
+    const cue = Math.max(sound, pred * 0.9, loom, socialFreeze * 0.45);
+    this.defenseGain = this.drives.fear ? 1 : 0;
+    const amp = 0.75 + 0.45 * this.light;
+    this.fear = Math.max(dec(this.fear, 22), clamp(cue * amp, 0, 1));
+    if (!this.drives.fear) this.fear = 0;
+
+    // ---- pick a defence, and hold it long enough to be a bout ----
+    this.defenseT = Math.max(0, this.defenseT - dt);
+    if (loom > 0.25 || (onset && imminence > 0.85)) {
+      this.mode = 'flight';
+      this.defenseT = Math.max(this.defenseT, 2.4);
+    } else if (onset && imminence > 0.3) {
+      // freezing bouts last tens of seconds in a real mouse; compressed here
+      this.mode = 'freeze';
+      this.defenseT = 5 + 7 * this.fear;
+    } else if (this.startle > 0.3 && this.defenseT <= 0) {
+      this.mode = 'freeze';
+      this.defenseT = 1.2 + 2 * this.fear;
+    } else if (pred > 0.55) {
+      // right on top of the source: no more assessing, just leave
+      this.mode = 'flight';
+      this.defenseT = Math.max(this.defenseT, 0.9);
+    } else if (this.defenseT <= 0) {
+      this.mode = (this.fear > 0.18 || pred > 0.05) ? 'risk' : null;
+    }
+    if (!this.drives.fear) { this.mode = null; this.defenseT = 0; }
+
+    const want = { freeze: 0, flight: 0, risk: 0 };
+    if (this.mode === 'freeze') want.freeze = clamp(0.5 + 0.5 * this.fear, 0, 1);
+    else if (this.mode === 'flight') want.flight = clamp(0.6 + 0.4 * Math.max(this.fear, loom), 0, 1);
+    else if (this.mode === 'risk') want.risk = clamp(0.3 + 0.7 * Math.max(this.fear, pred), 0, 1);
+    const k = Math.min(1, dt * 7);
+    this.freeze += (want.freeze - this.freeze) * k;
+    // escape is the fastest thing a mouse does: ~250 ms from stimulus to run
+    this.flight += (want.flight - this.flight) * (want.flight > this.flight ? Math.min(1, dt * 20) : k);
+    this.risk += (want.risk - this.risk) * k;
+
+    // Avoidance is not the same thing as fear. A rotten smell is avoided
+    // without any defensive response at all, which is the whole point of
+    // having it here: disgust and fear are separate circuits.
+    this.aversion = clamp(Math.max(this.fear, 1.1 * foul), 0, 1);
+
+    // ---- the slow arm: the HPA axis ----
+    // Corticosterone peaks 15-30 minutes after a stressor in a real mouse and
+    // takes an hour to clear. Compressed here the way the oestrous cycle is.
+    const hpa = clamp(0.9 * this.fear + 0.3 * this.light * this.centre
+                    + 0.35 * this.waterLevel + 0.3 * foul, 0, 1);
+    this.cort += (hpa - this.cort) * Math.min(1, dt / (hpa > this.cort ? 10 : 40));
+
+    // ---- aversive events are negative reinforcement ----
+    // The dopamine cells report the dip, and because the critic reads the same
+    // place code the value map does, the spot it happened in loses its value.
+    if (onset) this.rewardKernel -= 0.32 * imminence;
+    this.rewardKernel -= (0.7 * pred + 0.25 * foul + 1.2 * loom) * dt;
+
+    // ---- the measures an experimenter would actually report ----
+    this.freezePct += ((this.freeze > 0.5 ? 1 : 0) - this.freezePct) * Math.min(1, dt / 30);
+    const src = this.threatSource;
+    if (src) {
+      this.avoidT += dt;
+      // the quadrant the stimulus is in: 25% of the arena, so 25% is chance
+      if (Math.sign(s.x) === Math.sign(src.x) && Math.sign(s.z) === Math.sign(src.z)) {
+        this.avoidIn += dt;
+      }
+    }
+  }
+
+  /** the defensive behaviour running right now, if any */
+  get defenseState() {
+    if (this.flight > 0.35) return 'FLEEING';
+    if (this.freeze > 0.45) return 'FREEZING';
+    // assessing needs something to assess; without it the animal is just wary
+    if (this.risk > 0.35) return this.threatSource ? 'RISK ASSESSMENT' : 'WARY';
+    return null;
+  }
+
+  /** fraction of time spent in the stimulus quadrant; 0.25 is chance */
+  get quadrantOccupancy() {
+    return this.avoidT > 2 ? this.avoidIn / this.avoidT : null;
   }
 
   // ------------------------------------------------------------ ripple/replay
@@ -1057,6 +1520,11 @@ export class Brain {
       return;
     }
 
+    // Fear-induced immobility is not quiet rest. A frozen mouse is running a
+    // 4 Hz respiratory rhythm, not sharp-wave ripples, so replay waits until
+    // the fear has worn off.
+    if (this.fear > 0.3) return;
+
     // ripples happen during quiet immobility, and far more often just after a reward
     if (this.immobile > 0.25 && this.traj.length > 12) {
       const boost = this.sinceReward < 3 ? 3.4 : 1;
@@ -1076,14 +1544,61 @@ export class Brain {
   }
 
   // --------------------------------------------------------------------- LFP
+  /**
+   * Generated at LFP_FS, with the components a real CA1 electrode would pick up:
+   * theta whose frequency follows running speed, slow and fast gamma nested at
+   * *different* theta phases (Colgin et al. 2009), ripples during immobility,
+   * delta when the animal is still, and a noise floor.
+   */
   updateLFP(s, dt, moving) {
     const amp = 0.25 + 0.75 * moving;
-    this.lfpTheta = amp * Math.sin(this.thetaPhase);
-    // gamma nested in theta (stronger on the descending phase)
-    const g = 0.17 * amp * Math.sin(this.thetaPhase * 9.5) * (0.5 + 0.5 * Math.cos(this.thetaPhase));
+    const ph = this.lfpPhase;
+    const steps = Math.max(1, Math.min(96, Math.round(dt * LFP_FS)));
+    const sub = dt / steps;
     const rip = this.ripple;
-    this.lfpRipple = rip.active ? 0.95 * rip.env * Math.sin(this.t * TAU * 180) : 0;
-    this.lfp = this.lfpTheta + g + this.lfpRipple + (this.rnd() - 0.5) * 0.06;
+    let v = 0;
+    for (let k = 0; k < steps; k++) {
+      ph.theta = (ph.theta + TAU * this.thetaFreq * sub) % TAU;
+      ph.slow = (ph.slow + TAU * 38 * sub) % TAU;
+      ph.fast = (ph.fast + TAU * 78 * sub) % TAU;
+      ph.delta = (ph.delta + TAU * 2.5 * sub) % TAU;
+      ph.ripple = (ph.ripple + TAU * 185 * sub) % TAU;
+
+      const theta = amp * Math.sin(ph.theta);
+      // slow gamma rides the descending phase, fast gamma rides the peak
+      const slowG = 0.18 * amp * Math.sin(ph.slow) * (0.5 + 0.5 * Math.cos(ph.theta - 2.2));
+      const fastG = 0.10 * amp * Math.sin(ph.fast) * (0.5 + 0.5 * Math.cos(ph.theta));
+      const delta = 0.35 * (1 - moving) * Math.sin(ph.delta);
+      const ripple = rip.active ? 0.9 * rip.env * Math.sin(ph.ripple) : 0;
+      v = theta + slowG + fastG + delta + ripple + (this.rnd() - 0.5) * 0.05;
+      this.lfpBuf[this.lfpWrite] = v;
+      this.lfpWrite = (this.lfpWrite + 1) % LFP_N;
+    }
+    this.lfpTheta = amp * Math.sin(ph.theta);
+    this.lfpRipple = rip.active ? 0.9 * rip.env * Math.sin(ph.ripple) : 0;
+    this.lfp = v;
+  }
+
+  /** one sample per frame: enough for the scalar readouts, no spectrum */
+  updateLFPCheap(dt, moving) {
+    const amp = 0.25 + 0.75 * moving;
+    const ph = this.lfpPhase;
+    ph.theta = (ph.theta + TAU * this.thetaFreq * dt) % TAU;
+    this.lfpTheta = amp * Math.sin(ph.theta);
+    this.lfpRipple = this.ripple.active ? 0.9 * this.ripple.env : 0;
+    this.lfp = this.lfpTheta + this.lfpRipple;
+  }
+
+  /** switch how much of this brain is actually computed */
+  setDetail(level) {
+    if (level === this.detail) return;
+    this.detail = level;
+    if (level > 1) { this.lfpBuf.fill(0); this.lfpWrite = 0; }
+  }
+
+  /** where the newest LFP sample sits, for a reader that wants the last N */
+  lfpWindow(n) {
+    return { buf: this.lfpBuf, start: (this.lfpWrite - n + LFP_N * 2) % LFP_N, n, fs: LFP_FS };
   }
 
   // ------------------------------------------------------- map accumulation
@@ -1200,14 +1715,81 @@ export class Brain {
     return { data: out, peak, bins: BINS };
   }
 
-  /** activation 0..1 per Allen region, for the 3-D brain */
-  regionActivation() {
-    const out = (this.actScratch ||= {});
-    for (const [acr, pops] of Object.entries(this.byRegion)) {
-      let num = 0, den = 0;
-      for (const p of pops) { num += p.norm * p.weight; den += p.weight; }
-      out[acr] = den ? num / den : 0;
+  /**
+   * Wire the populations together using measured anterograde tracer strengths
+   * (Allen Mouse Brain Connectivity Atlas). Weights are normalised per target,
+   * so a region's total afferent drive is comparable no matter how many inputs
+   * it has; self-projections are dropped because each population already has
+   * its own dynamics.
+   */
+  setConnectivity(matrix) {
+    const mine = new Set(Object.keys(this.byRegion));
+    const aff = {};
+    for (const [src, row] of Object.entries(matrix || {})) {
+      if (!mine.has(src)) continue;
+      for (const [dst, w] of Object.entries(row)) {
+        if (!mine.has(dst) || dst === src || !(w > 0)) continue;
+        (aff[dst] ||= []).push([src, w]);
+      }
     }
+    for (const [dst, list] of Object.entries(aff)) {
+      // compress the four-orders-of-magnitude dynamic range of projection
+      // volume, then normalise, so one huge input cannot swamp everything
+      const scaled = list.map(([src, w]) => [src, Math.log10(1 + w * 100)]);
+      const total = scaled.reduce((a, [, w]) => a + w, 0) || 1;
+      aff[dst] = scaled
+        .map(([src, w]) => [src, w / total, PROJECTION_SIGN[src] ?? 1])
+        .sort((a, b) => b[1] - a[1]);
+    }
+    this.afferents = aff;
+
+    // flatten into CSR-style arrays for the per-frame loop
+    const R = this.regionKeys.length;
+    const idx = [], wts = [];
+    this.affStart = new Int32Array(R + 1);
+    for (let t = 0; t < R; t++) {
+      this.affStart[t] = idx.length;
+      for (const [src, w, sign] of aff[this.regionKeys[t]] || []) {
+        const si = this.regionIndex[src];
+        if (si === undefined) continue;
+        idx.push(si);
+        wts.push(w * sign);
+      }
+    }
+    this.affStart[R] = idx.length;
+    this.affIdx = Int32Array.from(idx);
+    this.affW = Float32Array.from(wts);
+    return Object.keys(aff).length;
+  }
+
+  /** synaptic input each region is receiving from the rest of the brain */
+  computeNetDrive() {
+    if (!this.affIdx.length) return;
+    const start = this.affStart, idx = this.affIdx, w = this.affW;
+    const prev = this.prevArr, net = this.netArr;
+    for (let t = 0; t < net.length; t++) {
+      let v = 0;
+      for (let k = start[t], e = start[t + 1]; k < e; k++) v += w[k] * prev[idx[k]];
+      net[t] = v;
+    }
+  }
+
+  /** fill actArr from the populations, without allocating */
+  refreshActivation() {
+    const act = this.actArr, pops = this.regionPops, wsum = this.regionWeight;
+    for (let i = 0; i < act.length; i++) {
+      const list = pops[i];
+      let num = 0;
+      for (let j = 0; j < list.length; j++) num += list[j].norm * list[j].weight;
+      act[i] = num / wsum[i];
+    }
+  }
+
+  /** activation 0..1 per Allen region, for the 3-D brain */
+  regionActivation(fresh) {
+    const out = fresh ? {} : (this.actScratch ||= {});
+    const keys = this.regionKeys, act = this.actArr;
+    for (let i = 0; i < keys.length; i++) out[keys[i]] = act[i];
     return out;
   }
 
@@ -1222,22 +1804,38 @@ export class Brain {
       VTA: () => `RPE ${this.rpePhasic >= 0 ? '+' : ''}${this.rpePhasic.toFixed(2)}`,
       ACB: () => `V(s) = ${this.value.toFixed(3)}`,
       ARH: () => `hunger ${(this.hunger * 100) | 0}%`,
-      MOB: () => `odour ${(this.odor * 100).toFixed(0)}%`,
+      MOB: () => this.predatorOdour + this.foulOdour > 0.03
+        ? `aversive odour ${((this.predatorOdour + this.foulOdour) * 100) | 0}%`
+        : `odour ${(this.odor * 100).toFixed(0)}%`,
       'SSp-bfd': () => `contact ${(this.whiskerContact * 100) | 0}%`,
       SFO: () => `thirst ${(this.thirst * 100) | 0}%`,
       MEPO: () => `thirst ${(this.thirst * 100) | 0}%`,
       OV: () => `thirst ${(this.thirst * 100) | 0}%`,
       AOB: () => `pheromone ${(this.pheromone * 100) | 0}%`,
-      MEA: () => `partner ${(this.social * 100) | 0}%`,
-      BST: () => `${this.sex === 'M' ? 'male-typical (larger)' : 'female-typical'}`,
+      MEA: () => this.vnoThreat > 0.03 ? `predator odour ${(this.vnoThreat * 100) | 0}%`
+        : `partner ${(this.social * 100) | 0}%`,
+      BST: () => this.infanticide > 0.05
+        ? `BSTrh infanticidal ${(this.infanticide * 100) | 0}%`
+        : (this.sex === 'M' && this.paternal > 0.1 ? `paternal — cMPOA holding BSTrh down`
+          : `${this.sex === 'M' ? 'male-typical (larger)' : 'female-typical'}`),
       MPN: () => this.pupCount > 0
         ? `parental drive ${(this.parentalDrive * 100) | 0}%`
         : `mate drive ${(this.mateDrive * 100) | 0}%`,
-      VMH: () => this.sex === 'F' ? `receptive ${(this.estrous * 100) | 0}%` : `mate drive ${(this.mateDrive * 100) | 0}%`,
+      VMH: () => this.aggression > 0.15 ? `attack drive ${(this.aggression * 100) | 0}%`
+        : this.fear > 0.12
+        ? `VMHdm defence ${(this.byKey.vmhdm.smooth).toFixed(0)} Hz`
+        : (this.sex === 'F' ? `receptive ${(this.estrous * 100) | 0}%` : `mate drive ${(this.mateDrive * 100) | 0}%`),
       PMv: () => `body condition ${(this.bodyCondition * 100) | 0}%`,
       SCH: () => `light ${(this.light * 100) | 0}%`,
-      AUDp: () => this.pupCall > 0.05 ? `pup calling ${(this.pupCall * 100) | 0}%` : 'no pup calls',
-      PVH: () => `stress load ${((this.light * this.centre + this.waterLevel) * 50) | 0}%`,
+      AUDp: () => this.threatSound > 0.05 ? `predator call ${(this.threatSound * 100) | 0}%`
+        : this.pupCall > 0.05 ? `pup calling ${(this.pupCall * 100) | 0}%` : 'no pup calls',
+      PVH: () => `corticosterone ${(this.cort * 100) | 0}% · stress ${((this.light * this.centre + this.waterLevel) * 50) | 0}%`,
+      PAG: () => this.defenseState
+        ? `${this.defenseState.toLowerCase()} · vl ${(this.freeze * 100) | 0}% / dl ${(this.flight * 100) | 0}%`
+        : `arousal · fear ${(this.fear * 100) | 0}%`,
+      CEA: () => `fear ${(this.fear * 100) | 0}%`,
+      BLA: () => `fear ${(this.fear * 100) | 0}%`,
+      SCm: () => this.looming > 0.05 ? `looming ${(this.looming * 100) | 0}%` : 'orienting',
       POST: () => `${((this.popVector() * 180 / Math.PI + 360) % 360).toFixed(0)}° decoded`,
     }[acr];
     return `${n} cells · ${hz.toFixed(1)} Hz mean${extra ? ' · ' + extra() : ''}`;
@@ -1307,6 +1905,8 @@ export class Brain {
     }
     this.w.fill(0);
     this.trace.fill(0);
+    this.lfpBuf.fill(0);
+    for (const p of this.pops) { p.isiHist.fill(0); p.lastSpike.fill(-1); }
     this.traj.length = 0;
     this.hunger = 0.72;
     this.thirst = 0.45;
@@ -1327,6 +1927,21 @@ export class Brain {
     this.matedTimes.length = 0;
     this.cheeseCount = 0;
     this.swrCount = 0;
+    this.threatSound = this.predatorOdour = this.foulOdour = this.vnoThreat = 0;
+    this.looming = this.startle = this.fear = 0;
+    this.freeze = this.flight = this.risk = this.cort = this.aversion = 0;
+    this.mode = null;
+    this.defenseT = 0;
+    this.threatSource = null;
+    this.threatKind = null;
+    this.threatDist = Infinity;
+    this.freezePct = 0;
+    this.avoidT = this.avoidIn = 0;
+    this.alive = true;
+    this.causeOfDeath = null;
+    this.health = 1;
+    this.pain = this.aggression = this.maternalAgg = this.rivalry = 0;
+    this.infanticide = this.paternal = 0;
     this.value = this.valuePrev = this.rpe = this.rpeSmooth = this.valueNorm = 0;
     this.rpeSlow = this.rpePhasic = 0;
     this.valueMax = 0.25;

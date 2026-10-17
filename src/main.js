@@ -13,16 +13,33 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Arena } from './world/arena.js';
 import { Mouse, MAX_RUN } from './world/mouse.js';
+import { ProxyBody, ProxyHerd, transferBody } from './world/proxybody.js';
 import { Brain, DAY, GESTATION } from './neuro/brain.js';
 import { Litter, NEST_R } from './world/pups.js';
+import { Threats, STIMULI, STIMULUS_ORDER, ODOUR_R } from './world/threats.js';
+import { mountMortality, CAUSES } from './world/mortality.js';
 import { BrainView } from './view/brainview.js';
 import { Raster, Trace, drawRateMap, drawPolar } from './view/plots.js';
+import { mountSignals } from './view/signalspanel.js';
 import { SLOT } from './view/palette.js';
 import { ROLES, ORDER, GROUPS } from './neuro/regions.js';
 
 const $ = (id) => document.getElementById(id);
 /** the "no optogenetic drive" object, shared so it never allocates */
 const NO_DRIVE = Object.freeze({});
+
+const MAX_COLONY = 100;        // past this the cage is full and juveniles disperse
+/**
+ * Only a handful of animals get the articulated rig: it is 64 meshes each, so a
+ * hundred of them would be 6,400 draw calls. The rest share one instanced mesh.
+ */
+const RIG_BUDGET = 6;
+const BRAIN_STRIDE = 3;        // animals you are not inspecting think at 20 Hz
+
+// Module state that makeAgent() reads. It MUST be declared above the agent
+// construction below: a `let` further down the file is in the temporal dead
+// zone when makeAgent runs, which throws and takes the whole page with it.
+let connData = null;
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 function angDiff(a, b) {
@@ -61,7 +78,13 @@ controls.enabled = false;
 
 const arena = new Arena(scene);
 arena.setLight(0.35);
+const herd = new ProxyHerd(scene, MAX_COLONY);
+const rigPool = [];
+const proxyScratch = [];
 const litter = new Litter(scene, arena);
+// predator calls, looming shadows and aversive odours — the stimuli live here,
+// the reactions to them live in the brain and in driveAuto() below
+const threats = new Threats(scene, arena);
 litter.onWean = (pup) => {
   // the parents stop counting it as a pup, and it becomes a mouse of its own
   const parents = pup.owner ? [pup.owner, pup.owner.lastSire].filter(Boolean) : agents;
@@ -80,7 +103,6 @@ litter.onEyesOpen = (p) => {
 };
 
 // ----------------------------------------------------------------- the colony
-const MAX_COLONY = 8;          // past this the cage is full and juveniles disperse
 const ADULT_DAY = 42;          // mice reach sexual maturity at about six weeks
 const WEAN_DAY = 21;
 let seedSeq = 40;
@@ -95,16 +117,14 @@ function sizeForAge(days) {
 /** one animal: a body in the arena and its own brain */
 function makeAgent({ sex, name, x, z, heading, fur, belly, ageDays = 70, seed }) {
   const brain = new Brain({ arena: arena.size, sex, name, seed: seed ?? (sex === 'M' ? 7 : 23) });
-  const mouse = new Mouse(scene, arena);
-  mouse.x = x; mouse.z = z; mouse.heading = heading;
-  // tint without touching the rig itself
-  mouse.mats.fur.color.set(fur);
-  mouse.mats.belly.color.set(belly);
-  // the rig has its own idle autopilot; this session steers instead, so that
-  // immobility (and therefore sharp-wave ripples and mating bouts) is preserved
-  if (typeof mouse.setAutopilot === 'function') mouse.setAutopilot(false);
+  if (connData) brain.setConnectivity(connData.matrix);
+  // every animal starts on a proxy body; the level-of-detail pass hands real
+  // rigs to whichever ones are nearest the camera
+  const mouse = new ProxyBody(arena, { x, z, heading });
+  mouse.furColor = new THREE.Color(fur);
   return {
-    brain, mouse, sex, name,
+    brain, mouse, sex, name, fur, belly,
+    hasRig: false, phase: 0, accDt: 0, pend: {},
     auto: false,
     ageDays,
     mature: ageDays >= ADULT_DAY,
@@ -113,6 +133,56 @@ function makeAgent({ sex, name, x, z, heading, fur, belly, ageDays = 70, seed })
     state: 'RESTING',
     home: { x, z, heading },
   };
+}
+
+/** give this animal the articulated rig */
+function acquireRig(ag) {
+  let rig = rigPool.pop();
+  if (!rig) {
+    rig = new Mouse(scene, arena);
+    // the rig ships an idle autopilot; this session steers, so that immobility
+    // (and with it sharp-wave ripples and mating bouts) is preserved
+    if (typeof rig.setAutopilot === 'function') rig.setAutopilot(false);
+  }
+  rig.mats.fur.color.set(ag.fur);
+  rig.mats.belly.color.set(ag.belly);
+  transferBody(ag.mouse, rig);
+  rig.root.visible = true;
+  ag.mouse = rig;
+  ag.hasRig = true;
+}
+
+/** hand the rig back and fall to the instanced body */
+function releaseRig(ag) {
+  const rig = ag.mouse;
+  const proxy = new ProxyBody(arena);
+  transferBody(rig, proxy);
+  proxy.furColor = new THREE.Color(ag.fur);
+  rig.root.visible = false;
+  rigPool.push(rig);
+  ag.mouse = proxy;
+  ag.hasRig = false;
+}
+
+/**
+ * Decide who gets a rig and how much of each brain to compute. Re-run a few
+ * times a second rather than every frame, so bodies are not swapped constantly.
+ */
+function updateLOD() {
+  const cam = camera.position;
+  const ranked = agents.map((ag) => ({
+    ag,
+    // a corpse never takes a rig back off a live animal: it has no gait to
+    // show, and the instanced body is the one that knows how to lie on its side
+    d: ag.dead ? Infinity : (ag === A() ? -1 : Math.hypot(ag.mouse.x - cam.x, ag.mouse.z - cam.z)),
+  })).sort((a, b) => a.d - b.d);
+  const want = new Set(ranked.slice(0, RIG_BUDGET).map((r) => r.ag));
+  for (const ag of agents) {
+    const needRig = want.has(ag) && !ag.dead;
+    if (needRig && !ag.hasRig) acquireRig(ag);
+    else if (!needRig && ag.hasRig) releaseRig(ag);
+    ag.brain.setDetail(ag === A() ? 2 : (needRig ? 1 : 0));
+  }
 }
 
 /** a weaned pup grows up and joins the colony */
@@ -137,6 +207,7 @@ function matureInto(pup) {
     ageDays: WEAN_DAY, seed: ++seedSeq,
   });
   ag.auto = true;
+  ag.phase = agents.length % BRAIN_STRIDE;
   agents.push(ag);
   buildColonyCards();
   logEvent('state', `a pup <b>grew up</b> — ${name} joins the colony (${agents.length} mice)`);
@@ -157,7 +228,7 @@ function nearestOther(i) {
   const m = agents[i].mouse;
   let best = null, bd = Infinity;
   for (let k = 0; k < agents.length; k++) {
-    if (k === i) continue;
+    if (k === i || agents[k].dead) continue;
     const d = Math.hypot(agents[k].mouse.x - m.x, agents[k].mouse.z - m.z);
     if (d < bd) { bd = d; best = agents[k]; }
   }
@@ -310,19 +381,23 @@ function renderInspector() {
     <div class="meta">Allen CCF id ${info?.id ?? '—'} · ${GROUPS[role.group].label} · ${A().name}</div>
     <div class="role">${role.role}</div>
     <div class="ref">${role.ref}</div>
+    ${connectionLines(selected)}
     <div class="live" id="insp-live">${A().brain.liveLine(selected)}</div>`;
 }
 selectRegion('CA1');
 
 // ----------------------------------------------------------------- colony panel
 const cgrid = $('cgrid');
-const DRIVE_COLOR = { hunger: SLOT.reward, thirst: SLOT.sensory, mate: SLOT.state };
+const DRIVE_COLOR = { hunger: SLOT.reward, thirst: SLOT.sensory, mate: SLOT.state, health: SLOT.motor };
 let cards = [];
+
+const COLONY_ROWS = 24;        // a hundred live DOM rows is not worth the cost
 
 /** the colony grows, so this is rebuilt whenever its membership changes */
 function buildColonyCards() {
   cgrid.textContent = '';
-  cards = agents.map((ag, i) => {
+  const shown = agents.slice(0, COLONY_ROWS);
+  cards = shown.map((ag, i) => {
     const el = document.createElement('div');
     el.className = 'crow';
     el.innerHTML = `
@@ -337,6 +412,7 @@ function buildColonyCards() {
         <span class="bar" title="appetite"><i data-d="hunger"></i></span>
         <span class="bar" title="thirst"><i data-d="thirst"></i></span>
         <span class="bar" title="mating drive"><i data-d="mate"></i></span>
+        <span class="bar" title="body condition — bite wounds and weight loss take it down"><i data-d="health"></i></span>
       </div>
       <div class="rep" data-repro></div>`;
     el.onclick = () => takeControl(i);
@@ -344,6 +420,7 @@ function buildColonyCards() {
     const fills = Object.fromEntries([...el.querySelectorAll('[data-d]')].map((n) => [n.dataset.d, n]));
     for (const [k, n] of Object.entries(fills)) n.style.background = DRIVE_COLOR[k];
     return {
+      agent: ag,
       el,
       you: el.querySelector('[data-you]'),
       age: el.querySelector('[data-age]'),
@@ -352,6 +429,15 @@ function buildColonyCards() {
       fills,
     };
   });
+  if (agents.length > COLONY_ROWS) {
+    cgrid.appendChild(el('div', 'cmore', `\u2026 and ${agents.length - COLONY_ROWS} more`));
+  }
+}
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
 }
 buildColonyCards();
 
@@ -364,6 +450,63 @@ function takeControl(i) {
   daTrace.i = 0;
   $('b-auto').classList.toggle('on', agents[player].auto);
   renderInspector();
+}
+
+// ----------------------------------------------------------------- connectivity
+// Real anterograde tracer strengths, so the populations are wired to each other
+// the way a mouse brain actually is rather than each sitting on its own.
+fetch('./data/mouse_connectivity.json')
+  .then((r) => r.json())
+  .then((d) => {
+    connData = d;
+    let wired = 0;
+    for (const ag of agents) wired = ag.brain.setConnectivity(d.matrix);
+    renderInspector();
+    logEvent('spatial', `wired <b>${wired} regions</b> to each other using measured tracer projections`);
+  })
+  .catch((err) => console.warn('connectivity data unavailable:', err.message));
+
+/** the strongest measured inputs and outputs for a region */
+function connectionLines(acr) {
+  if (!connData) return '';
+  const m = connData.matrix;
+  const fmt = (list, label) => {
+    if (!list.length) return '';
+    const items = list.map(([r, v]) =>
+      `<b style="color:${SLOT[ROLES[r].group]}">${r}</b> ${v < 1 ? v.toFixed(2) : v.toFixed(1)}`).join(' · ');
+    return `<div class="conn"><span>${label}</span> ${items}</div>`;
+  };
+  const outs = Object.entries(m[acr] || {})
+    .filter(([t, v]) => t !== acr && ROLES[t] && v > 0)
+    .sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const ins = Object.entries(m)
+    .map(([src, row]) => [src, row[acr] || 0])
+    .filter(([src, v]) => src !== acr && ROLES[src] && v > 0)
+    .sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (!outs.length && !ins.length) return '';
+  return fmt(ins, 'input from') + fmt(outs, 'projects to');
+}
+
+// ----------------------------------------------------------------- signals panel
+// Real recorded firing statistics, so the model can be shown against them.
+let signals = null;
+fetch('./data/mouse_unit_metrics.json')
+  .then((r) => r.json())
+  .catch(() => null)
+  .then((metrics) => {
+    signals = mountSignals({
+      getBrain: () => A().brain,
+      getRegion: () => selected,
+      metrics,
+    });
+    $('b-signals').onclick = () => { signals.open(!signals.isOpen()); syncSignalsBtn(); };
+    if (metrics) {
+      logEvent('sensory', `firing rates from <b>${metrics.units_analysed.toLocaleString()} recorded neurons</b> loaded for comparison`);
+    }
+  });
+function syncSignalsBtn() {
+  const b = $('b-signals');
+  if (b && signals) b.classList.toggle('on', signals.isOpen());
 }
 
 // ----------------------------------------------------------------- optogenetics
@@ -385,30 +528,147 @@ import('./optogenetics.js')
   })
   .catch((err) => console.warn('optogenetics module unavailable:', err.message));
 
+/** the fighting & mortality card: its own markup, like the optogenetics rig */
+function toggleMortality(force) {
+  const on = force === undefined ? !mortality.isOpen() : !!force;
+  // the panels menu can also have it hidden; opening it from the toolbar means
+  // the user wants to see it, so clear that too
+  if (on && panelOn.mortality === false) { panelOn.mortality = true; applyPanels(); }
+  mortality.open(on);
+  const btn = $('b-mortality');
+  if (btn) btn.classList.toggle('on', on);
+}
+
 /** is the optogenetics card currently showing? (it owns its own markup) */
 function opticsOpen() {
   const card = document.getElementById('optics');
   return !!card && card.style.display !== 'none';
 }
 
-/** an optogenetically driven attack, and the victim fleeing it */
-function stepAggression(dt) {
-  for (let i = 0; i < agents.length; i++) {
-    const ag = agents[i], vic = other(i);
-    const agg = (ag.opto && ag.opto.aggression) || 0;
-    if (!vic || agg < 0.45) { ag.attackT = 0; continue; }
-    const d = Math.hypot(ag.mouse.x - vic.mouse.x, ag.mouse.z - vic.mouse.z);
-    if (d < 0.08) {
-      ag.attackT = (ag.attackT || 0) + dt;
-      if (ag.attackT > 0.7) {
-        ag.attackT = 0;
-        ag.attacks = (ag.attacks || 0) + 1;
-        vic.fleeUntil = sessionT + 4;
-        vic.brain.bump = 1;              // the victim registers it as a threat
-        logEvent('state', `<b>${ag.name}</b> lunged at <b>${vic.name}</b> — VMHvl-driven attack`);
+// ----------------------------------------------------------------- mortality
+/**
+ * Fighting, infanticide and death. The rules live in world/mortality.js; this
+ * gives it the colony operations it cannot do for itself — taking a body out
+ * of the cage, and putting a strange male into it.
+ */
+const mortality = mountMortality({
+  getAgents: () => agents,
+  getLitter: () => litter,
+  getArena: () => arena,
+  now: () => sessionT,
+  onEvent: (group, html) => logEvent(group, html),
+  nearestOther: (ag) => other(agents.indexOf(ag)),
+  releaseRig: (ag) => releaseRig(ag),
+  onDeath: (ag) => {
+    // you cannot drive a corpse: control passes to whoever is still alive
+    if (agents[player] === ag) {
+      const next = agents.findIndex((g) => !g.dead);
+      if (next >= 0) {
+        takeControl(next);
+        logEvent('state', `you are now driving <b>${agents[next].name}</b>`);
       }
-    } else ag.attackT = 0;
+    }
+    buildColonyCards();
+  },
+  removeAgent: (ag) => removeAgent(ag),
+  addIntruder: () => addIntruder(),
+  mount: $('world-pane'),
+});
+
+/** take a body out of the cage */
+function removeAgent(ag) {
+  const i = agents.indexOf(ag);
+  if (i < 0 || agents.length <= 1) return;
+  if (ag.hasRig) releaseRig(ag);
+  if (ag.mouse && ag.mouse.root) scene.remove(ag.mouse.root);
+  if (ag.mouse && typeof ag.mouse.dispose === 'function') ag.mouse.dispose();
+  agents.splice(i, 1);
+  if (player >= agents.length) player = agents.length - 1;
+  else if (player > i) player--;
+  buildColonyCards();
+}
+
+/**
+ * The resident-intruder test: put an unfamiliar adult male into an established
+ * cage and the resident attacks him. It is the standard way aggression is
+ * measured, and the only variable that matters is that he is a stranger.
+ */
+function addIntruder() {
+  if (agents.length >= MAX_COLONY) {
+    logEvent('state', 'the cage is full — no room for an intruder');
+    return null;
   }
+  nameCount.M++;
+  const name = `intruder ${nameCount.M}`;
+  const a = Math.random() * TAU;
+  const ag = makeAgent({
+    sex: 'M', name,
+    x: clamp(Math.cos(a) * 0.5, -0.5, 0.5), z: clamp(Math.sin(a) * 0.5, -0.5, 0.5),
+    heading: a, fur: 0x8e8578, belly: 0xd8d2c6, ageDays: 70, seed: ++seedSeq,
+  });
+  ag.auto = true;
+  ag.phase = agents.length % BRAIN_STRIDE;
+  agents.push(ag);
+  buildColonyCards();
+  logEvent('state', `an <b>unfamiliar male</b> was put in the cage — the resident has about a minute to decide what he is`);
+  return ag;
+}
+
+// ----------------------------------------------------------------- threats
+/**
+ * The aversive-stimulus panel. Each button presents one stimulus to both mice;
+ * what they do about it is decided by their own defensive circuits.
+ */
+const tgrid = $('tgrid');
+if (tgrid) {
+  for (const key of STIMULUS_ORDER) {
+    const st = STIMULI[key];
+    const b = document.createElement('button');
+    b.className = 'tbtn';
+    b.innerHTML = `<span class="ic">${st.icon}</span><span class="tl">${st.label}</span><kbd>${st.key}</kbd>`;
+    b.title = `${st.blurb}\n\n${st.detail}\n\n${st.ref}`;
+    b.onclick = () => presentThreat(key);
+    tgrid.appendChild(b);
+  }
+}
+
+/** present one stimulus, and say so in the feed */
+function presentThreat(key) {
+  const st = STIMULI[key];
+  const r = threats.trigger(key, sessionT);
+  if (!r) return;
+  const habituated = r.repeat > 1 && r.responsiveness < 0.95
+    ? ` — presentation ${r.repeat}, and they are down to <b>${(r.responsiveness * 100) | 0}%</b> of the first response (habituation)`
+    : '';
+  logEvent('sensory', st.kind === 'odour'
+    ? `<b>${st.label}</b> placed in the far corner${habituated}`
+    : `<b>${st.label}</b>${habituated}`);
+}
+
+function clearThreatSource() {
+  if (!threats.odour) return;
+  threats.clearOdour();
+  logEvent('sensory', 'the odour source was taken away');
+}
+
+function toggleThreatSound() {
+  threats.setMuted(!threats.muted);
+  const b = $('b-thr-mute');
+  if (b) b.textContent = `sound: ${threats.muted ? 'off' : 'on'}`;
+}
+
+if ($('b-thr-clear')) $('b-thr-clear').onclick = clearThreatSource;
+if ($('b-thr-mute')) $('b-thr-mute').onclick = toggleThreatSound;
+
+/**
+ * How strongly a point is contaminated for this animal, 0..1. Used to steer
+ * the autopilot away: a mouse will not walk into a corner that smells of fox
+ * to reach a piece of cheese, and that conflict is the measurable behaviour.
+ */
+function threatAt(b, x, z) {
+  const src = b.threatSource;
+  if (!src || b.aversion < 0.06) return 0;
+  return clamp(1 - Math.hypot(x - src.x, z - src.z) / (ODOUR_R * 1.6), 0, 1) * b.aversion;
 }
 
 // ----------------------------------------------------------------- event feed
@@ -449,7 +709,30 @@ function watchEvents(dt) {
   }
   was.oestrus = oe;
 
+  // ---- defensive reactions ----
   agents.forEach((g) => {
+    const bb = g.brain;
+    const d = bb.defenseState;
+    if (d !== g.wasDefense && sessionT - (g.defLogT || -9) > 2.5) {
+      g.defLogT = sessionT;
+      if (d === 'FREEZING') {
+        logEvent('state', `<b>${g.name}</b> froze — ventrolateral <b>PAG</b> at `
+          + `<b>${bb.byKey.pag.smooth.toFixed(0)} Hz</b>, and the hippocampus dropped from theta to the `
+          + `<b>${bb.thetaFreq.toFixed(1)} Hz</b> breathing rhythm of a frightened mouse`);
+      } else if (d === 'FLEEING') {
+        logEvent('state', `<b>${g.name}</b> bolted — superior colliculus to dorsal <b>PAG</b>, about a quarter of a second from stimulus to run`);
+      } else if (d === 'WARY') {
+        logEvent('state', `<b>${g.name}</b> is wary — keeping to the walls, and not interested in food`);
+      } else if (d === 'RISK ASSESSMENT') {
+        const what = STIMULI[bb.threatKind] ? STIMULI[bb.threatKind].label : 'it';
+        logEvent('state', `<b>${g.name}</b> is assessing the <b>${what}</b> from a distance — stretched out, sniffing, going no closer`);
+      } else if (!d && g.wasDefense) {
+        logEvent('state', `<b>${g.name}</b> settled — fear down to <b>${(bb.fear * 100) | 0}%</b>, `
+          + `but corticosterone is still <b>${(bb.cort * 100) | 0}%</b> and takes minutes to clear`);
+      }
+    }
+    if (d !== g.wasDefense) g.wasDefense = d;
+
     const hungry = g.brain.drives.eat && g.brain.hunger > 0.85;
     if (hungry && !g.wasHungry) {
       logEvent('state', `<b>${g.name}</b> is very hungry — AgRP hunger neurons at <b>${g.brain.byKey.arh.smooth.toFixed(0)} Hz</b>`);
@@ -524,6 +807,12 @@ addEventListener('keydown', (e) => {
   if (k === 'm') rotateCue();
   if (k === 'x') takeControl((player + 1) % agents.length);
   if (k === 'o') toggleAuto();
+  if (k === 'b' && signals) { signals.open(!signals.isOpen()); syncSignalsBtn(); }
+  for (const sk of STIMULUS_ORDER) {
+    if (k === STIMULI[sk].key) presentThreat(sk);
+  }
+  if (k === '0') clearThreatSource();
+  if (k === 'n') toggleMortality();
   if (k === '[') setLight(arena.lightLevel - 0.12);
   if (k === ']') setLight(arena.lightLevel + 0.12);
   if (k === '-') setWater(arena.waterLevel - 0.12);
@@ -564,12 +853,13 @@ $('sl-water').onchange = () => logEvent('sensory',
   `water <b>${$('lab-water').textContent}</b>` +
   (arena.waterLevel > 0.5 ? ' — wading is slow and raises stress' : ''));
 
-const DRIVE_BTN = { eat: 'b-eat', drink: 'b-drink', mate: 'b-mate' };
-const DRIVE_WORD = { eat: 'eating', drink: 'drinking', mate: 'mating' };
+const DRIVE_BTN = { eat: 'b-eat', drink: 'b-drink', mate: 'b-mate', fear: 'b-fear' };
+const DRIVE_WORD = { eat: 'eating', drink: 'drinking', mate: 'mating', fear: 'defence' };
 const DRIVE_OFF = {
   eat: 'the hunger circuit is silent — they cannot eat',
   drink: 'the thirst circuit is silent — they cannot drink',
   mate: 'the mating circuit is silent — mating is impossible',
+  fear: 'the defensive circuit is silent — predator cues mean nothing to them now',
 };
 function toggleDrive(k) {
   const on = !agents[0].brain.drives[k];
@@ -581,6 +871,95 @@ function toggleDrive(k) {
                        : `<b>${DRIVE_WORD[k]}</b> switched off — ${DRIVE_OFF[k]}`);
 }
 for (const k of Object.keys(DRIVE_BTN)) $(DRIVE_BTN[k]).onclick = () => toggleDrive(k);
+
+// ----------------------------------------------------------------- panels
+/** Every panel can be shown or hidden, and the layout closes up around it. */
+const PANELS = [
+  { key: 'sidebar', label: 'whole side panel', group: 'layout' },
+  { key: 'brain', label: 'the brain, live', group: 'side panel' },
+  { key: 'busiest', label: 'busiest right now', group: 'side panel' },
+  { key: 'region', label: 'about this region', group: 'side panel' },
+  { key: 'maps', label: 'what the cells have learned', group: 'side panel' },
+  { key: 'regions', label: 'all 37 regions', group: 'side panel' },
+  { key: 'spikes', label: 'spike raster', group: 'along the bottom' },
+  { key: 'waves', label: 'brain waves', group: 'along the bottom' },
+  { key: 'reward', label: 'reward traces', group: 'along the bottom' },
+  { key: 'colony', label: 'the colony', group: 'over the arena' },
+  { key: 'feed', label: 'what just happened', group: 'over the arena' },
+  { key: 'threats', label: 'threats', group: 'over the arena' },
+  { key: 'mortality', label: 'fighting & mortality', group: 'over the arena' },
+  { key: 'keys', label: 'keys', group: 'over the arena' },
+];
+const panelOn = {};
+for (const p of PANELS) panelOn[p.key] = true;
+try { Object.assign(panelOn, JSON.parse(localStorage.getItem('mlm-panels') || '{}')); } catch { /* private mode */ }
+const shown = (k) => panelOn[k] !== false;
+
+function applyPanels() {
+  for (const p of PANELS) {
+    for (const e of document.querySelectorAll(`[data-panel="${p.key}"]`)) {
+      e.classList.toggle('panel-off', !shown(p.key));
+    }
+  }
+  document.body.classList.toggle('no-sidebar', !shown('sidebar'));
+  // the bottom strip closes up as its cells go away
+  const anyTrace = shown('waves') || shown('reward');
+  const tr = $('trace-right');
+  if (tr) tr.classList.toggle('panel-off', !anyTrace);
+  const ft = $('footer');
+  if (ft) {
+    ft.classList.toggle('panel-off', !shown('spikes') && !anyTrace);
+    ft.classList.toggle('wide-traces', !shown('spikes') && anyTrace);
+  }
+  resize();
+  try { localStorage.setItem('mlm-panels', JSON.stringify(panelOn)); } catch { /* private mode */ }
+}
+
+function buildPanelMenu() {
+  const m = $('panel-menu');
+  m.textContent = '';
+  let group = null;
+  for (const p of PANELS) {
+    if (p.group !== group) {
+      group = p.group;
+      const h = document.createElement('h6');
+      h.textContent = group;
+      m.appendChild(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'mrow' + (shown(p.key) ? ' on' : '');
+    row.innerHTML = `<span class="box"><span>✓</span></span>${p.label}`;
+    row.onclick = (e) => { e.stopPropagation(); panelOn[p.key] = !shown(p.key); applyPanels(); buildPanelMenu(); };
+    m.appendChild(row);
+  }
+  const foot = document.createElement('div');
+  foot.className = 'mfoot';
+  const btn = (text, fn) => {
+    const b = document.createElement('button');
+    b.textContent = text;
+    b.onclick = (e) => { e.stopPropagation(); fn(); applyPanels(); buildPanelMenu(); };
+    return b;
+  };
+  foot.appendChild(btn('show all', () => { for (const p of PANELS) panelOn[p.key] = true; }));
+  foot.appendChild(btn('arena only', () => { for (const p of PANELS) panelOn[p.key] = false; }));
+  m.appendChild(foot);
+}
+
+function togglePanelMenu(force) {
+  const m = $('panel-menu');
+  const open = force !== undefined ? force : m.hidden;
+  m.hidden = !open;
+  $('b-panels').classList.toggle('on', open);
+  if (open) buildPanelMenu();
+}
+$('b-panels').onclick = (e) => { e.stopPropagation(); togglePanelMenu(); };
+document.addEventListener('click', () => togglePanelMenu(false));
+
+// clicking a card's title rolls it up without removing it
+for (const h of document.querySelectorAll('.pcard > h4')) {
+  if (h.id === 'pop-head') continue;          // that one has its own behaviour
+  h.onclick = () => { h.parentElement.classList.toggle('shut'); resize(); };
+}
 
 // ----------------------------------------------------------------- toolbar
 function cycleCamera() {
@@ -631,6 +1010,10 @@ function doReset() {
     ag.eatCount = 0; ag.drinkT = 0;
   }
   arena.reset();
+  threats.reset();
+  mortality.reset();
+  const mute = $('b-thr-mute');
+  if (mute) mute.textContent = `sound: ${threats.muted ? 'off' : 'on'}`;
   for (const ag of agents) {
     ag.moveTarget = null; ag.pendingEat = null;
     ag.carrying = null; ag.nurseT = 0; ag.nursingNow = false; ag.halfway = false;
@@ -641,8 +1024,9 @@ function doReset() {
   // send the grown-up offspring away and restore the founding pair
   while (agents.length > 2) {
     const ag = agents.pop();
-    scene.remove(ag.mouse.root);
+    if (ag.hasRig) { ag.mouse.root.visible = false; rigPool.push(ag.mouse); }
   }
+  herd.sync([]);
   nameCount.M = 1; nameCount.F = 1;
   player = Math.min(player, agents.length - 1);
   for (const ag of agents) { ag.ageDays = 70; ag.mature = true; ag.lastSire = null; }
@@ -656,6 +1040,7 @@ function doReset() {
   raster.clear();
   lfpTrace.i = 0; daTrace.i = 0;
 }
+if ($('b-mortality')) $('b-mortality').onclick = () => toggleMortality();
 $('b-cam').onclick = cycleCamera;
 $('b-pause').onclick = togglePause;
 $('b-reset').onclick = doReset;
@@ -689,6 +1074,50 @@ function driveAuto(ag, dt, out) {
   const mate = other(agents.indexOf(ag));
   let goal = null, urgency = 0.45, sniff = false;
 
+  // ---- defence outranks every other motive ----
+  if (b.freeze > 0.45) {
+    out.throttle = 0; out.turn = 0; out.run = false; out.sniff = false;
+    return out;
+  }
+  if (b.flight > 0.3) {
+    // Away from the source if there is one to be away from; out of the open
+    // middle if the threat came from overhead. Mice run to shelter when they
+    // have one, and to a wall when they do not (Yilmaz & Meister 2013).
+    const src = b.threatSource;
+    const away = src ? Math.atan2(m.x - src.x, m.z - src.z) : Math.atan2(m.x, m.z);
+    const shelter = (litter.nest && b.pupCount > 0) ? litter.nest : null;
+    const run = shelter || {
+      x: clamp(m.x + Math.sin(away) * 0.8, -0.54, 0.54),
+      z: clamp(m.z + Math.cos(away) * 0.8, -0.54, 0.54),
+    };
+    steerTo(ag, run, out, 1);
+    out.run = true;
+    out.sniff = false;
+    return out;
+  }
+  if (b.risk > 0.3 && b.threatSource) {
+    // Risk assessment: hold station at a distance from the source, body
+    // stretched out towards it, sampling the air. The mouse neither leaves nor
+    // approaches — this is the behaviour predator odour mostly produces.
+    const src = b.threatSource;
+    const d = Math.max(0.02, Math.hypot(m.x - src.x, m.z - src.z));
+    const standoff = 0.3 + 0.18 * b.fear;
+    const ux = (m.x - src.x) / d, uz = (m.z - src.z) / d;
+    const post = {
+      x: clamp(src.x + ux * standoff, -0.54, 0.54),
+      z: clamp(src.z + uz * standoff, -0.54, 0.54),
+    };
+    const left = steerTo(ag, post, out, 0.35);
+    out.throttle *= 0.45;
+    out.sniff = true;
+    if (left < 0.07) {
+      // in position: face it and sniff
+      out.throttle = 0;
+      out.turn = clamp(-angDiff(Math.atan2(src.x - m.x, src.z - m.z), m.heading) * 1.8, -1, 1);
+    }
+    return out;
+  }
+
   const wantDrink = b.drives.drink ? b.thirst : 0;
   const wantEat = b.drives.eat ? b.hunger : 0;
   const wantMate = b.mateDrive;
@@ -700,9 +1129,16 @@ function driveAuto(ag, dt, out) {
     goal = { x: clamp(m.x + Math.sin(away) * 0.5, -0.55, 0.55),
              z: clamp(m.z + Math.cos(away) * 0.5, -0.55, 0.55) };
     urgency = 1;
-  } else if ((od.aggression || 0) > 0.35 && mate) {
+  } else if (Math.max(od.aggression || 0, b.aggression || 0) > 0.35 && mate) {
+    // a dominant male pursues the loser, and in a cage there is nowhere to go
     goal = { x: mate.mouse.x, z: mate.mouse.z };
     urgency = 1;
+  }
+
+  // a body in the cage is collected like a stray, and eaten
+  if (!goal && b.parentalDrive > 0.15 && typeof litter.nearestCarcass === 'function') {
+    const dead = litter.nearestCarcass(m.x, m.z);
+    if (dead && dead.dist < 0.5) { goal = { x: dead.pup.x, z: dead.pup.z }; urgency = 0.45; }
   }
 
   // A calling pup outranks almost everything: retrieval is the priority
@@ -732,7 +1168,9 @@ function driveAuto(ag, dt, out) {
     let best = null, bd = 99;
     for (const c of arena.cheeses) {
       if (c.eaten) continue;
-      const d = Math.hypot(c.x - m.x, c.z - m.z);
+      // cheese in a corner that smells of predator is worth less: the detour
+      // is the approach-avoidance conflict, in metres
+      const d = Math.hypot(c.x - m.x, c.z - m.z) + 1.6 * threatAt(b, c.x, c.z);
       if (d < bd) { bd = d; best = c; }
     }
     if (best) { goal = best; urgency = wantEat; }
@@ -746,8 +1184,18 @@ function driveAuto(ag, dt, out) {
     if (!ag.wander || ag.wanderT <= 0) {
       // prefer the perimeter, more strongly when the lights are up
       const edge = 0.42 + 0.14 * (1 - arena.lightLevel);
-      const a = Math.random() * TAU;
+      let a = Math.random() * TAU;
       ag.wander = { x: clamp(Math.cos(a) * edge * 1.25, -0.52, 0.52), z: clamp(Math.sin(a) * edge * 1.25, -0.52, 0.52) };
+      // never wander into the contaminated corner: try a few other directions
+      for (let k = 0; k < 6 && threatAt(b, ag.wander.x, ag.wander.z) > 0.12; k++) {
+        a = Math.random() * TAU;
+        ag.wander = { x: clamp(Math.cos(a) * edge * 1.25, -0.52, 0.52), z: clamp(Math.sin(a) * edge * 1.25, -0.52, 0.52) };
+      }
+      // thigmotaxis: a frightened mouse keeps its flank against a wall
+      if (b.fear > 0.2) {
+        ag.wander.x = clamp(ag.wander.x * (1 + 0.4 * b.fear), -0.54, 0.54);
+        ag.wander.z = clamp(ag.wander.z * (1 + 0.4 * b.fear), -0.54, 0.54);
+      }
       ag.wanderT = 2.5 + Math.random() * 3;
     }
     goal = ag.wander;
@@ -879,7 +1327,8 @@ const autoCmd = { throttle: 0, turn: 0, run: false, sniff: false };
 let last = performance.now();
 let sessionT = 0;
 let mapAcc = 0, valueAcc = 0, hudAcc = 0, autoAcc = 0;
-let shadowAcc = 0, brainAcc = 0;
+let shadowAcc = 0, brainAcc = 0, lodAcc = 0, colonyAcc = 0;
+let frameNo = 0;
 let activation = {};
 let brainVisible = true;
 
@@ -894,6 +1343,12 @@ const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padSt
 
 function stepAgent(ag, i, dt) {
   const b = ag.brain, m = ag.mouse;
+  // a dead animal is a body in the cage: no commands, no brain, no state
+  if (ag.dead) {
+    ag.state = 'DEAD';
+    if (typeof m.update === 'function') m.update(dt, { throttle: 0, turn: 0, run: false, sniff: false }, b);
+    return null;
+  }
   let cmd;
   if (ag.auto) {
     cmd = driveAuto(ag, dt, autoCmd);
@@ -919,6 +1374,11 @@ function stepAgent(ag, i, dt) {
   // optogenetically induced freezing stops the animal dead
   const od = ag.opto || NO_DRIVE;
   if ((od.freeze || 0) > 0.5) { eff.throttle = 0; eff.turn = 0; }
+  // Defence, from the brain's last update. A freezing mouse cannot be driven
+  // with the keyboard either — that is what freezing is.
+  if (b.freeze > 0.45) { eff.throttle = 0; eff.turn *= 0.07; eff.sniff = false; }
+  else if (b.flight > 0.3) { eff.run = true; eff.sniff = false; }
+  else if (b.risk > 0.3) { eff.throttle *= 0.5; eff.sniff = true; }
   if (od.locomotor) eff.throttle = clamp(eff.throttle + od.locomotor * 0.6, -1, 1);
   if (od.turnBias) eff.turn = clamp(eff.turn + od.turnBias, -1, 1);
 
@@ -992,6 +1452,14 @@ function stepAgent(ag, i, dt) {
   }
   ag.nursingNow = !ag.carrying && atNest && litter.count > 0 && m.speed < 0.05 && b.lactating;
 
+  // ---- a carcass in the nest is eaten, not mourned ----
+  // This is the behaviour that gets reported as maternal infanticide: the pup
+  // was already dead, usually of cold, and the dam consumes the body.
+  if (b.parentalDrive > 0.15 && typeof litter.nearestCarcass === 'function') {
+    const dead = litter.nearestCarcass(m.x, m.z);
+    if (dead && dead.dist < 0.045) litter.consume(dead.pup, ag);
+  }
+
   const mate = other(i);
   const pdx = mate ? mate.mouse.x - m.x : 99, pdz = mate ? mate.mouse.z - m.z : 99;
   const pdist = Math.hypot(pdx, pdz);
@@ -1008,24 +1476,76 @@ function stepAgent(ag, i, dt) {
   st.retrieving = !!ag.carrying;
   st.nursed = nursed;
   st.retrieved = retrieved;
+  // Animals you are not inspecting think at a lower rate. Events that happen on
+  // a frame where the brain does not run are held and delivered on the next one.
+  ag.accDt += dt;
+  if (ate) ag.pend.ate = true;
+  if (drank) ag.pend.drank = true;
+  if (nursed) ag.pend.nursed = true;
+  if (retrieved) ag.pend.retrieved = true;
+
   st.partner = mate ? {
     dist: pdist,
     bearing: angDiff(Math.atan2(pdx, pdz), m.heading),
     sex: mate.sex,
     receptive: mate.brain.estrous,
   } : null;
-  b.update(st, dt);
+  if (st.mated) ag.pend.mated = true;
 
-  // optogenetic modulation sits on top of the physiology, per animal
-  ag.opto = optics.apply(b, dt) || NO_DRIVE;
-  if (typeof m.setBehaviourDrive === 'function') m.setBehaviourDrive(ag.opto);
+  st.mature = ag.mature;
+  // crowding escalates male aggression, in a cage as in a colony room
+  st.crowding = clamp(agents.length / 40, 0, 1);
+  // how close the nearest live pup is: what a male's BSTrh is answering to
+  st.pupNear = litter.pups && litter.pups.length
+    ? Math.max(0, ...litter.pups.filter((q) => !q.dead && !q.carried)
+        .map((q) => clamp(1 - Math.hypot(q.x - m.x, q.z - m.z) / 0.12, 0, 1)))
+    : 0;
+  if (st.partner && mate) st.partner.familiar = mortality.familiarity(ag, mate);
+
+  // Predator cues: sounds reach the whole cage, odours are a gradient the
+  // animal has to move through. The onset of a stimulus and the startle
+  // impulse are both shorter than one brain step for an animal thinking at
+  // the reduced rate, so they are held the same way the other events are.
+  st.threat = threats.sense(m.x, m.z);
+  // a mouse that can see its cagemate freeze catches the fear from it
+  st.threat.socialFreeze = mate && pdist < 0.35 ? mate.brain.freeze : 0;
+  if (st.threat.onset) ag.pend.threatOnset = st.threat.onset;
+  ag.pend.startle = Math.max(ag.pend.startle || 0, st.threat.startle);
+  ag.pend.imminence = Math.max(ag.pend.imminence || 0, st.threat.imminence);
+  const doBrain = b.detail >= 2 || (frameNo % BRAIN_STRIDE) === ag.phase;
+  if (doBrain) {
+    const bdt = Math.min(0.12, ag.accDt);
+    st.ate = !!ag.pend.ate;
+    st.drank = !!ag.pend.drank;
+    st.nursed = !!ag.pend.nursed;
+    st.retrieved = !!ag.pend.retrieved;
+    st.mated = !!ag.pend.mated;
+    st.threat.onset = ag.pend.threatOnset || null;
+    st.threat.startle = Math.max(st.threat.startle, ag.pend.startle || 0);
+    st.threat.imminence = Math.max(st.threat.imminence, ag.pend.imminence || 0);
+    b.update(st, bdt);
+
+    // optogenetic modulation sits on top of the physiology, per animal
+    ag.opto = optics.apply(b, bdt) || NO_DRIVE;
+    // the body shows whichever is stronger: the light, or real fear
+    const drive = { ...ag.opto };
+    drive.fear = clamp(Math.max(b.fear, drive.fear || 0), 0, 1);
+    drive.freeze = clamp(Math.max(b.freeze, drive.freeze || 0), 0, 1);
+    if (typeof m.setBehaviourDrive === 'function') m.setBehaviourDrive(drive);
+    ag.accDt = 0;
+    ag.pend = {};
+  }
 
   // ---- behavioural state label ----
   const vcm = m.speed * 100;
   const odd = ag.opto || NO_DRIVE;
   let state = 'RESTING';
+  const agg = Math.max(b.aggression || 0, odd.aggression || 0);
   if ((odd.freeze || 0) > 0.5) state = 'FREEZING';
-  else if ((odd.aggression || 0) > 0.45) state = 'ATTACKING';
+  else if (agg > 0.45) state = b.maternalAgg > 0.4 ? 'DEFENDING NEST' : 'ATTACKING';
+  else if (b.infanticide > 0.4) state = 'STALKING A PUP';
+  else if (b.defenseState) state = b.defenseState;
+  else if (b.health < 0.6) state = 'WOUNDED';
   else if (ag.fleeUntil > sessionT) state = 'FLEEING';
   else if (inBout) state = 'MATING';
   else if (ag.carrying) state = 'CARRYING PUP';
@@ -1052,7 +1572,7 @@ function stepMating(dt) {
   for (let i = 0; i < agents.length && !pair; i++) {
     for (let j = i + 1; j < agents.length && !pair; j++) {
       const a = agents[i], b = agents[j];
-      if (a.sex === b.sex || !a.mature || !b.mature) continue;
+      if (a.sex === b.sex || !a.mature || !b.mature || a.dead || b.dead) continue;
       if (!a.brain.drives.mate || !b.brain.drives.mate) continue;
       if (Math.hypot(a.mouse.x - b.mouse.x, a.mouse.z - b.mouse.z) >= 0.085) continue;
       const f = a.sex === 'F' ? a : b, m = a.sex === 'F' ? b : a;
@@ -1087,6 +1607,7 @@ function stepMating(dt) {
 /** age everybody, grow the juveniles, and let them reach maturity */
 function stepAging(dt) {
   for (const ag of agents) {
+    if (ag.dead) continue;
     ag.ageDays += dt / DAY;
     const sz = sizeForAge(ag.ageDays);
     ag.mouse.root.scale.setScalar(sz);
@@ -1134,15 +1655,32 @@ function frame(now) {
   last = now;
   adaptResolution(dt);
 
+  frameNo++;
+  lodAcc += dt;
+  if (lodAcc > 0.4) { lodAcc = 0; updateLOD(); }
+
   if (!paused) {
     sessionT += dt;
+    threats.update(dt, sessionT);
     stepMating(dt);
     stepAging(dt);
-    stepAggression(dt);
+    mortality.step(dt);
     stepBirth(dt);
     for (let i = 0; i < agents.length; i++) stepAgent(agents[i], i, dt);
     arena.update(dt, sessionT, A().mouse, A().brain);
     litter.update(dt, sessionT, agents);
+
+    // one draw call for every animal without a rig
+    proxyScratch.length = 0;
+    for (const ag of agents) {
+      if (ag.hasRig) continue;
+      // let the instanced bodies show the defensive state the rig would
+      ag.mouse.freeze = ag.brain.freeze || 0;
+      ag.mouse.fear = ag.brain.fear || 0;
+      ag.mouse.dead = !ag.brain.alive;
+      proxyScratch.push(ag.mouse);
+    }
+    herd.sync(proxyScratch);
   }
 
   // ---- camera follows whichever mouse you are driving ----
@@ -1170,12 +1708,12 @@ function frame(now) {
   const brain = A().brain;
   activation = brain.regionActivation();
   if (!paused) {
-    raster.draw(brain, dt);
+    if (shown('spikes')) raster.draw(brain, dt);
     lfpTrace.push(brain, dt);
     daTrace.push(brain, dt);
   }
-  lfpTrace.draw();
-  daTrace.draw();
+  if (shown('waves')) lfpTrace.draw();
+  if (shown('reward')) daTrace.draw();
   // the second WebGL context does not need 60 Hz
   brainAcc += dt;
   if (brainReady && brainVisible && brainAcc > 1 / 30) {
@@ -1212,6 +1750,7 @@ function frame(now) {
   }
 
   if (!paused) watchEvents(dt);
+  if (signals) { signals.update(dt); syncSignalsBtn(); }
 
   const tgt = A().moveTarget;
   marker.visible = !!tgt;
@@ -1222,8 +1761,55 @@ function frame(now) {
 
   hudAcc += dt;
   if (hudAcc > 0.1) { hudAcc = 0; updateHud(); }
+  colonyAcc += dt;
+  if (colonyAcc > 0.5) { colonyAcc = 0; updateColony(); }
 
   requestAnimationFrame(frame);
+}
+
+function updateColony() {
+  const mins = Math.max(sessionT, 1) / 60;
+  cards.forEach((c, i) => {
+    const g = c.agent;
+    if (!g) return;
+    const b = g.brain;
+    const isMe = g === A();
+    c.el.classList.toggle('me', isMe);
+    c.you.style.visibility = isMe ? 'visible' : 'hidden';
+    c.state.textContent = g.state.toLowerCase();
+    c.age.textContent = g.mature ? 'adult' : `${Math.floor(g.ageDays)}d`;
+    c.age.classList.toggle('juv', !g.mature);
+    const set = (k, v) => {
+      if (c.fills[k]) c.fills[k].style.width = `${(clamp(v, 0, 1) * 100).toFixed(0)}%`;
+    };
+    set('hunger', b.drives.eat ? b.hunger : 0);
+    set('thirst', b.drives.drink ? b.thirst : 0);
+    set('mate', b.mateDrive);
+    const cond = clamp(b.health - (g.surv ? g.surv.weightLoss * 3 : 0), 0, 1);
+    set('health', cond);
+    if (c.fills.health) {
+      c.fills.health.style.background = cond > 0.65 ? SLOT.motor : cond > 0.3 ? SLOT.reward : SLOT.state;
+    }
+    c.el.classList.toggle('dead', !!g.dead);
+
+    let rep = '';
+    if (b.pregnant) {
+      const day = (b.gestation * GESTATION / DAY).toFixed(0);
+      rep = `<span class="pg">pregnant</span> day ${day}/${(GESTATION / DAY).toFixed(0)} · ${b.litterSize} pups
+             <span class="pbar"><span style="width:${(b.gestation * 100).toFixed(0)}%"></span></span>`;
+    } else if (g.dead) {
+      const cz = CAUSES[g.cause];
+      rep = `<span class="stray">dead</span> — ${cz ? cz.label : g.cause} · ${Math.round(g.ageDays)} days old`;
+    } else if (b.pupCount > 0 && litter.count) {
+      rep = `<span class="pg">${g.sex === 'F' ? 'nursing' : 'with'} ${litter.count}</span> · day ${litter.days.toFixed(0)}` +
+            (litter.strays ? ` · <span class="stray">${litter.strays} astray</span>` : '') +
+            (litter.lost ? ` · <span class="stray">${litter.lost} lost</span>` : '');
+    } else {
+      rep = `ate ${b.cheeseCount} · drank ${b.drinkCount} · mated ${b.mateCount}` +
+            (b.litters ? ` · ${b.litters} litter${b.litters > 1 ? 's' : ''}` : '');
+    }
+    c.repro.innerHTML = rep;
+  });
 }
 
 function updateHud() {
@@ -1270,38 +1856,38 @@ function updateHudInner() {
   const live = $('insp-live');
   if (live) live.textContent = brain.liveLine(selected);
 
-  // ---- colony analysis ----
-  const mins = Math.max(sessionT, 1) / 60;
-  agents.forEach((g, i) => {
-    const c = cards[i];
-    if (!c) return;
-    const b = g.brain;
-    c.el.classList.toggle('me', i === player);
-    c.you.style.visibility = i === player ? 'visible' : 'hidden';
-    c.state.textContent = g.state.toLowerCase();
-    c.age.textContent = g.mature ? 'adult' : `${Math.floor(g.ageDays)}d`;
-    c.age.classList.toggle('juv', !g.mature);
-    const set = (k, v) => {
-      if (c.fills[k]) c.fills[k].style.width = `${(clamp(v, 0, 1) * 100).toFixed(0)}%`;
+  // ---- threats: what is being presented, and what it is doing ----
+  const tstat = threats.status();
+  const tsub = $('thr-sub');
+  if (tsub) {
+    tsub.textContent = tstat.odour
+      ? `${tstat.odour.label} · ${(tstat.odour.level * 100) | 0}%`
+      : (tstat.sound || '');
+  }
+  const tstate = $('thr-state');
+  if (tstate) {
+    const d = brain.defenseState;
+    tstate.textContent = d
+      ? d.toLowerCase()
+      : brain.aversion > 0.12 ? 'avoiding the corner' : 'nothing to worry about';
+    tstate.className = `tstate${d ? ' on' : ''}`;
+    const setBar = (id, v, col) => {
+      const el = $(id);
+      if (!el) return;
+      el.style.width = `${(clamp(v, 0, 1) * 100).toFixed(0)}%`;
+      el.style.background = col;
     };
-    set('hunger', b.drives.eat ? b.hunger : 0);
-    set('thirst', b.drives.drink ? b.thirst : 0);
-    set('mate', b.mateDrive);
+    setBar('thr-fear', brain.fear, SLOT.state);
+    setBar('thr-cort', brain.cort, SLOT.reward);
+    $('thr-fear-v').textContent = `${(brain.fear * 100) | 0}%`;
+    $('thr-cort-v').textContent = `${(brain.cort * 100) | 0}%`;
+    $('thr-frz').textContent = `${(brain.freezePct * 100) | 0}%`;
+    const q = brain.quadrantOccupancy;
+    $('thr-quad').textContent = q === null ? '—' : `${(q * 100) | 0}%`;
+  }
 
-    let rep = '';
-    if (b.pregnant) {
-      const day = (b.gestation * GESTATION / DAY).toFixed(0);
-      rep = `<span class="pg">pregnant</span> day ${day}/${(GESTATION / DAY).toFixed(0)} · ${b.litterSize} pups
-             <span class="pbar"><span style="width:${(b.gestation * 100).toFixed(0)}%"></span></span>`;
-    } else if (b.pupCount > 0 && litter.count) {
-      rep = `<span class="pg">${g.sex === 'F' ? 'nursing' : 'with'} ${litter.count}</span> · day ${litter.days.toFixed(0)}` +
-            (litter.strays ? ` · <span class="stray">${litter.strays} astray</span>` : '');
-    } else {
-      rep = `ate ${b.cheeseCount} · drank ${b.drinkCount} · mated ${b.mateCount}` +
-            (b.litters ? ` · ${b.litters} litter${b.litters > 1 ? 's' : ''}` : '');
-    }
-    c.repro.innerHTML = rep;
-  });
+  const mb = $('b-mortality');
+  if (mb) mb.classList.toggle('on', mortality.isOpen());
 
   const ob = $('b-optics');
   if (ob && ob.style.display !== 'none') ob.classList.toggle('on', opticsOpen());
@@ -1326,6 +1912,9 @@ $('welcome-start').onclick = () => {
   try { localStorage.setItem('mlm-seen', '1'); } catch { /* private mode */ }
 };
 $('welcome').onclick = (e) => { if (e.target === $('welcome')) showWelcome(false); };
+
+applyPanels();
+buildPanelMenu();
 
 setLight(0.35);
 setWater(0);
