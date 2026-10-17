@@ -16,19 +16,18 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      # find rather than a ** glob: globstar is a bash 4 option, and a shell
+      # without it silently checks a subset instead of failing
       - name: parse every module
         run: |
-          shopt -s globstar
-          for f in src/**/*.js; do
-            node --check "$f" || exit 1
-          done
-          echo "all modules parse"
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+          echo "all $(find src -name '*.js' | wc -l | tr -d ' ') modules parse"
 
       - name: every local import resolves
         run: node .github/scripts/check-imports.mjs
@@ -42,3 +41,29 @@ jobs:
 
       - name: the page references files that exist
         run: node .github/scripts/check-page.mjs
+
+  # The checks above cannot see a module that parses, imports cleanly and then
+  # throws the moment it is evaluated. This one loads the page for real.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: install a browser
+        run: |
+          npm install --no-save playwright@1.56.0
+          npx playwright install --with-deps chromium
+
+      - name: serve the repository
+        run: |
+          node .github/scripts/serve.mjs &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8777/index.html >/dev/null && break
+            sleep 1
+          done
+
+      - name: load the page and fail on anything it throws
+        run: node .github/scripts/smoke.mjs

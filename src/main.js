@@ -18,6 +18,8 @@ import { Brain, DAY, GESTATION } from './neuro/brain.js';
 import { Litter, NEST_R } from './world/pups.js';
 import { Threats, STIMULI, STIMULUS_ORDER, ODOUR_R } from './world/threats.js';
 import { mountMortality, CAUSES } from './world/mortality.js';
+import { ColonyGrid, PITCH } from './world/colonygrid.js';
+import { mountReport } from './report.js';
 import { BrainView } from './view/brainview.js';
 import { Raster, Trace, drawRateMap, drawPolar } from './view/plots.js';
 import { mountSignals } from './view/signalspanel.js';
@@ -76,31 +78,62 @@ controls.maxDistance = 3.2;
 controls.maxPolarAngle = Math.PI / 2.04;
 controls.enabled = false;
 
-const arena = new Arena(scene);
-arena.setLight(0.35);
-const herd = new ProxyHerd(scene, MAX_COLONY);
+/**
+ * Nine cages rather than one. Each is a THREE.Group with an x/z offset, and
+ * everything inside it — bodies, litter, odours — keeps using cage-local
+ * coordinates, so only the camera, the mouse picking and the cage-to-cage
+ * transfers have to know the difference between local and world.
+ */
+const grid = new ColonyGrid(scene, { onEvent: (g, h) => logEvent(g, h) });
 const rigPool = [];
 const proxyScratch = [];
-const litter = new Litter(scene, arena);
-// predator calls, looming shadows and aversive odours — the stimuli live here,
-// the reactions to them live in the brain and in driveAuto() below
-const threats = new Threats(scene, arena);
-litter.onWean = (pup) => {
-  // the parents stop counting it as a pup, and it becomes a mouse of its own
-  const parents = pup.owner ? [pup.owner, pup.owner.lastSire].filter(Boolean) : agents;
-  for (const g of parents) g.brain.pupCount = Math.max(0, g.brain.pupCount - 1);
-  matureInto(pup);
-  if (litter.count === 0) {
-    for (const g of agents) g.brain.lactating = false;
-    logEvent('state', `the litter is <b>fully weaned</b> — ${litter.weaned} raised`);
-    buildColonyCards();
-  }
-};
-litter.onEyesOpen = (p) => {
-  if (p.id % 97 === 0 || litter.pups.indexOf(p) === 0) {
-    logEvent('sensory', `the pups' <b>eyes have opened</b> — day ${(p.age / DAY).toFixed(0)}`);
-  }
-};
+
+// Each cage gets its own litter, its own instanced bodies and its own
+// aversive stimuli, because the conditions are what differ between them.
+for (const box of grid.boxes) {
+  box.herd = new ProxyHerd(box.group, 40);
+  box.litter = new Litter(box.group, box.arena);
+  box.threats = new Threats(box.group, box.arena);
+  box.litter.onWean = (pup) => {
+    const parents = pup.owner ? [pup.owner, pup.owner.lastSire].filter(Boolean) : box.agents;
+    for (const g of parents) g.brain.pupCount = Math.max(0, g.brain.pupCount - 1);
+    matureInto(pup, box);
+    if (box.litter.count === 0) {
+      for (const g of box.agents) g.brain.lactating = false;
+      logEvent('state', `a litter in <b>${box.cond.name}</b> is fully weaned — ${box.litter.weaned} raised`);
+      buildColonyCards();
+    }
+  };
+  box.litter.onEyesOpen = (pp) => {
+    if (box === playerBox() && (pp.id % 97 === 0 || box.litter.pups.indexOf(pp) === 0)) {
+      logEvent('sensory', `the pups' <b>eyes have opened</b> — day ${(pp.age / DAY).toFixed(0)}`);
+    }
+  };
+}
+
+/** the cage the mouse you are driving is in — what every UI control acts on */
+const playerBox = () => (agents[player] && agents[player].box) || grid.boxes[4];
+// `arena`, `litter` and `threats` always mean "the cage you are looking at",
+// so every panel, slider and hotkey keeps working exactly as it did with one.
+let arena = grid.boxes[4].arena;
+let litter = grid.boxes[4].litter;
+let threats = grid.boxes[4].threats;
+/** point the UI at whichever cage the driven animal is now in */
+function followBox() {
+  const box = playerBox();
+  if (box.arena === arena) return false;
+  arena = box.arena;
+  litter = box.litter;
+  threats = box.threats;
+  grid.here = box;
+  grid.describe(box);
+  syncEnvUI();
+  return true;
+}
+
+/** world position of a point in a cage */
+const worldX = (ag, x) => x + ag.box.origin.x;
+const worldZ = (ag, z) => z + ag.box.origin.z;
 
 // ----------------------------------------------------------------- the colony
 const ADULT_DAY = 42;          // mice reach sexual maturity at about six weeks
@@ -115,15 +148,18 @@ function sizeForAge(days) {
 }
 
 /** one animal: a body in the arena and its own brain */
-function makeAgent({ sex, name, x, z, heading, fur, belly, ageDays = 70, seed }) {
-  const brain = new Brain({ arena: arena.size, sex, name, seed: seed ?? (sex === 'M' ? 7 : 23) });
+function makeAgent({ sex, name, x, z, heading, fur, belly, ageDays = 70, seed, box }) {
+  const home = box || grid.boxes[4];
+  const brain = new Brain({ arena: home.arena.size, sex, name, seed: seed ?? (sex === 'M' ? 7 : 23) });
   if (connData) brain.setConnectivity(connData.matrix);
+  brain.envId = home.id;              // its hippocampal map is this cage's map
   // every animal starts on a proxy body; the level-of-detail pass hands real
   // rigs to whichever ones are nearest the camera
-  const mouse = new ProxyBody(arena, { x, z, heading });
+  const mouse = new ProxyBody(home.arena, { x, z, heading });
   mouse.furColor = new THREE.Color(fur);
   return {
-    brain, mouse, sex, name, fur, belly,
+    brain, mouse, sex, name, fur, belly, box: home,
+    bornAt: 0, visited: new Set([home.cond.name]), crossings: 0,
     hasRig: false, phase: 0, accDt: 0, pend: {},
     auto: false,
     ageDays,
@@ -139,7 +175,7 @@ function makeAgent({ sex, name, x, z, heading, fur, belly, ageDays = 70, seed })
 function acquireRig(ag) {
   let rig = rigPool.pop();
   if (!rig) {
-    rig = new Mouse(scene, arena);
+    rig = new Mouse(ag.box.group, ag.box.arena);
     // the rig ships an idle autopilot; this session steers, so that immobility
     // (and with it sharp-wave ripples and mating bouts) is preserved
     if (typeof rig.setAutopilot === 'function') rig.setAutopilot(false);
@@ -147,6 +183,10 @@ function acquireRig(ag) {
   rig.mats.fur.color.set(ag.fur);
   rig.mats.belly.color.set(ag.belly);
   transferBody(ag.mouse, rig);
+  // a pooled rig may have come from another cage: reparent, so that its
+  // local coordinates land inside the cage this animal is actually in
+  ag.box.group.add(rig.root);
+  rig.arena = ag.box.arena;
   rig.root.visible = true;
   ag.mouse = rig;
   ag.hasRig = true;
@@ -155,7 +195,7 @@ function acquireRig(ag) {
 /** hand the rig back and fall to the instanced body */
 function releaseRig(ag) {
   const rig = ag.mouse;
-  const proxy = new ProxyBody(arena);
+  const proxy = new ProxyBody(ag.box.arena);
   transferBody(rig, proxy);
   proxy.furColor = new THREE.Color(ag.fur);
   rig.root.visible = false;
@@ -186,7 +226,7 @@ function updateLOD() {
 }
 
 /** a weaned pup grows up and joins the colony */
-function matureInto(pup) {
+function matureInto(pup, box) {
   if (agents.length >= MAX_COLONY) {
     logEvent('state', `a weaned ${pup.sex === 'M' ? 'male' : 'female'} left the cage — <b>the colony is full</b> (${MAX_COLONY})`);
     return null;
@@ -201,36 +241,124 @@ function matureInto(pup) {
     col.offsetHSL((Math.random() - 0.5) * 0.04, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * k);
     return col.getHex();
   };
+  const home = box || grid.boxes[4];
   const ag = makeAgent({
-    sex, name, x: pup.x, z: pup.z, heading: Math.random() * Math.PI * 2,
+    sex, name, box: home, x: pup.x, z: pup.z, heading: Math.random() * Math.PI * 2,
     fur: jitter(base, 0.07), belly: jitter(sex === 'M' ? 0xe4ded5 : 0xf2ebe8, 0.05),
     ageDays: WEAN_DAY, seed: ++seedSeq,
   });
   ag.auto = true;
+  ag.bornAt = sessionT;
   ag.phase = agents.length % BRAIN_STRIDE;
   agents.push(ag);
+  home.agents.push(ag);
   buildColonyCards();
   logEvent('state', `a pup <b>grew up</b> — ${name} joins the colony (${agents.length} mice)`);
   return ag;
 }
 
-const agents = [
-  makeAgent({ sex: 'M', name: 'male', x: -0.35, z: -0.35, heading: Math.PI * 0.25, fur: 0xa89d8e, belly: 0xe4ded5 }),
-  makeAgent({ sex: 'F', name: 'female', x: 0.36, z: 0.3, heading: -Math.PI * 0.7, fur: 0xcfbfc4, belly: 0xf2ebe8 }),
-];
-let player = 0;
-agents[1].auto = true;
-nameCount.M = 1; nameCount.F = 1;
+/**
+ * The founding population: every cage stocked according to its condition, so
+ * the differences between them are there from the first second.
+ */
+const agents = [];
+function stockCages() {
+  for (const box of grid.boxes) {
+    const want = box.cond.mice || ['M', 'F'];
+    want.forEach((sex, i) => {
+      nameCount[sex]++;
+      const a = (i / want.length) * Math.PI * 2;
+      const r = want.length > 2 ? 0.34 : 0.3;
+      const ag = makeAgent({
+        sex, box,
+        name: `${sex === 'M' ? 'male' : 'female'} ${nameCount[sex]}`,
+        x: Math.cos(a) * r, z: Math.sin(a) * r, heading: -a,
+        fur: sex === 'M' ? 0xa89d8e : 0xcfbfc4,
+        belly: sex === 'M' ? 0xe4ded5 : 0xf2ebe8,
+        ageDays: 70, seed: ++seedSeq,
+      });
+      ag.auto = true;
+      ag.phase = agents.length % BRAIN_STRIDE;
+      agents.push(ag);
+      box.agents.push(ag);
+    });
+  }
+}
+stockCages();
+// start in the control cage: the others are the experiment, this is the baseline
+let player = Math.max(0, agents.findIndex((g) => g.box === grid.boxes[4]));
 const A = () => agents[player];
+
+/**
+ * An animal goes through a tunnel into the next cage.
+ *
+ * The hippocampus treats the two cages as different places, which they are:
+ * the map it was using goes away and another one comes out, and the rate map
+ * in the panel starts rebuilding from nothing. Come back and the first map
+ * comes back with it.
+ */
+function transferAgent(ag, cross) {
+  const from = cross.from, to = cross.to;
+  const i = from.agents.indexOf(ag);
+  if (i >= 0) from.agents.splice(i, 1);
+  to.agents.push(ag);
+  ag.box = to;
+  ag.mouse.x = cross.at.x;
+  ag.mouse.z = cross.at.z;
+  ag.moveTarget = null;
+  ag.wander = null;
+  ag.roam = null;
+  ag.roamT = 4 + Math.random() * 6;  // settle in before looking for the next one
+  ag.crossT = sessionT + 1.5;        // no ping-ponging back through the mouth
+  if (ag.hasRig) { to.group.add(ag.mouse.root); ag.mouse.arena = to.arena; }
+  else ag.mouse.arena = to.arena;
+  from.left++;
+  to.arrived++;
+  ag.crossings = (ag.crossings || 0) + 1;
+  if (ag.visited) ag.visited.add(to.cond.name);
+  cross.tunnel.uses++;
+  grid.crossings++;
+  const remapped = ag.brain.enterEnvironment(to.id);
+  if (ag === A()) { followBox(); raster.clear(); }
+  if (ag === A() || grid.crossings < 8 || to === grid.centre) {
+    logEvent('spatial', `<b>${ag.name}</b> went through to <b>${to.cond.name}</b>`
+      + (ag.leaving ? ` — it could not find ${ag.leaving}` : '')
+      + (remapped ? ` · the hippocampus <b>remapped</b>, map ${Object.keys(ag.brain.envs).length} of nine` : ''));
+  }
+  ag.leaving = null;
+  grid.render();
+}
+
+/** what each cage does to the animals in it, over and above its furniture */
+function stepCondition(box, dt) {
+  const c = box.cond;
+  if (c.noise) {
+    box.noiseT -= dt;
+    if (box.noiseT <= 0) {
+      box.noiseT = c.noise * (0.7 + Math.random() * 0.6);
+      // you hear the cage you are in; the animals in the others still startle
+      box.threats.setMuted(box !== playerBox());
+      box.threats.trigger('burst', sessionT);
+    }
+  }
+  if (c.threat && !box.threats.odour) {
+    // the odour evaporates; in this cage it is a standing condition
+    box.threats.trigger(c.threat, sessionT);
+  }
+}
 
 /** the closest other animal, or null if this one is alone */
 function nearestOther(i) {
-  const m = agents[i].mouse;
+  const self = agents[i];
+  const m = self.mouse;
   let best = null, bd = Infinity;
   for (let k = 0; k < agents.length; k++) {
-    if (k === i || agents[k].dead) continue;
-    const d = Math.hypot(agents[k].mouse.x - m.x, agents[k].mouse.z - m.z);
-    if (d < bd) { bd = d; best = agents[k]; }
+    const o = agents[k];
+    // only cagemates: an animal two cages away is not a social partner, a
+    // rival or a mate, whatever the distance between the plates happens to be
+    if (k === i || o.dead || o.box !== self.box) continue;
+    const d = Math.hypot(o.mouse.x - m.x, o.mouse.z - m.z);
+    if (d < bd) { bd = d; best = o; }
   }
   return best;
 }
@@ -405,6 +533,7 @@ function buildColonyCards() {
         <span class="sx" style="color:${ag.sex === 'M' ? '#6aa6ff' : '#e58fb4'}">${ag.sex === 'M' ? '\u2642' : '\u2640'}</span>
         <span class="nm">${ag.name}</span>
         <span class="age" data-age>adult</span>
+        <span class="age" data-cage></span>
         <span class="st" data-state>resting</span>
         <span class="you" data-you>you</span>
       </div>
@@ -424,6 +553,7 @@ function buildColonyCards() {
       el,
       you: el.querySelector('[data-you]'),
       age: el.querySelector('[data-age]'),
+      cage: el.querySelector('[data-cage]'),
       state: el.querySelector('[data-state]'),
       repro: el.querySelector('[data-repro]'),
       fills,
@@ -444,11 +574,14 @@ buildColonyCards();
 function takeControl(i) {
   if (i === player || i < 0 || i >= agents.length) return;
   player = i;
-  agents.forEach((ag, k) => { ag.auto = k !== player; });
+  // every animal forages for itself, including the one you have just picked:
+  // selecting a mouse means watching it, not taking the keys off it
+  agents.forEach((ag) => { ag.auto = true; ag.moveTarget = null; });
   raster.clear();
   lfpTrace.i = 0;
   daTrace.i = 0;
   $('b-auto').classList.toggle('on', agents[player].auto);
+  followBox();
   renderInspector();
 }
 
@@ -528,12 +661,41 @@ import('./optogenetics.js')
   })
   .catch((err) => console.warn('optogenetics module unavailable:', err.message));
 
+grid.mount($('world-pane'), {
+  onPick: (box) => {
+    // clicking a cage in the panel drives something in it
+    const i = agents.findIndex((g) => g.box === box && !g.dead);
+    if (i >= 0) takeControl(i);
+  },
+});
+if (grid.viewBtn) {
+  grid.viewBtn.onclick = () => cycleCamera(camMode === 'all nine' ? 'follow' : 'all nine');
+}
+
+/** the nine-cages card */
+function toggleBoxes(force) {
+  const on = force === undefined ? !grid.isOpen() : !!force;
+  if (on && panelOn.boxes === false) { panelOn.boxes = true; applyPanels(); }
+  if (on) toggleMortality(false);          // they share the same slot
+  grid.openPanel(on);
+  const btn = $('b-boxes');
+  if (btn) btn.classList.toggle('on', on);
+}
+
+function toggleReport(force) {
+  const on = force === undefined ? !report.isOpen() : !!force;
+  report.open(on);
+  const btn = $('b-report');
+  if (btn) btn.classList.toggle('on', on);
+}
+
 /** the fighting & mortality card: its own markup, like the optogenetics rig */
 function toggleMortality(force) {
   const on = force === undefined ? !mortality.isOpen() : !!force;
   // the panels menu can also have it hidden; opening it from the toolbar means
   // the user wants to see it, so clear that too
   if (on && panelOn.mortality === false) { panelOn.mortality = true; applyPanels(); }
+  if (on && typeof grid !== 'undefined') grid.openPanel(false);
   mortality.open(on);
   const btn = $('b-mortality');
   if (btn) btn.classList.toggle('on', on);
@@ -554,12 +716,15 @@ function opticsOpen() {
 const mortality = mountMortality({
   getAgents: () => agents,
   getLitter: () => litter,
+  getLitters: () => grid.boxes.map((b) => b.litter),
+  litterFor: (ag) => (ag.box ? ag.box.litter : litter),
   getArena: () => arena,
   now: () => sessionT,
   onEvent: (group, html) => logEvent(group, html),
   nearestOther: (ag) => other(agents.indexOf(ag)),
   releaseRig: (ag) => releaseRig(ag),
   onDeath: (ag) => {
+    if (ag.box) ag.box.deaths++;
     // you cannot drive a corpse: control passes to whoever is still alive
     if (agents[player] === ag) {
       const next = agents.findIndex((g) => !g.dead);
@@ -575,6 +740,21 @@ const mortality = mountMortality({
   mount: $('world-pane'),
 });
 
+/**
+ * The session report: a row per animal, a row per cage, the timeline, and a
+ * set of rules that each look for one pattern worth pointing out. Downloads
+ * as Markdown or CSV.
+ */
+const report = mountReport({
+  mount: $('world-pane'),
+  agents,
+  grid,
+  mortality,
+  journal: () => journal,
+  sessionT: () => sessionT,
+  causeLabel: (k) => (CAUSES[k] ? CAUSES[k].label : (k || 'unknown')),
+});
+
 /** take a body out of the cage */
 function removeAgent(ag) {
   const i = agents.indexOf(ag);
@@ -582,6 +762,8 @@ function removeAgent(ag) {
   if (ag.hasRig) releaseRig(ag);
   if (ag.mouse && ag.mouse.root) scene.remove(ag.mouse.root);
   if (ag.mouse && typeof ag.mouse.dispose === 'function') ag.mouse.dispose();
+  const bi = ag.box ? ag.box.agents.indexOf(ag) : -1;
+  if (bi >= 0) ag.box.agents.splice(bi, 1);
   agents.splice(i, 1);
   if (player >= agents.length) player = agents.length - 1;
   else if (player > i) player--;
@@ -678,7 +860,14 @@ function threatAt(b, x, z) {
  */
 const feedList = $('feed-list');
 const feedRows = [];
+/**
+ * Everything that has happened, in order, for the session report. The feed on
+ * screen only keeps the last few; this keeps the lot, minus the markup.
+ */
+const journal = [];
 function logEvent(group, html) {
+  journal.push({ t: sessionT, group, text: String(html).replace(/<[^>]+>/g, '') });
+  if (journal.length > 900) journal.shift();
   const el = document.createElement('div');
   el.className = 'ev';
   el.style.borderLeftColor = SLOT[group] || 'var(--line2)';
@@ -787,8 +976,25 @@ function autoPickCells() {
 const keys = Object.create(null);
 const input = { throttle: 0, turn: 0, run: false, sniff: false };
 let paused = false;
+/** how many steps of the world go into one frame: 1x, 2x, 4x, 8x */
+const SPEEDS = [1, 2, 4, 8];
+const SUB_STEP = 1 / 60;       // one step of the world, in simulated seconds
+let simSpeed = 1;
+let simAcc = 0;
+let simStepsLast = 0;
+function cycleSpeed(to) {
+  simSpeed = to || SPEEDS[(SPEEDS.indexOf(simSpeed) + 1) % SPEEDS.length];
+  const b = $('b-speed');
+  if (b) {
+    b.textContent = `speed ${simSpeed}\u00d7`;
+    b.classList.toggle('on', simSpeed > 1);
+  }
+  logEvent('state', simSpeed === 1
+    ? 'back to <b>real time</b>'
+    : `running at <b>${simSpeed}\u00d7</b> — ${(5 / simSpeed).toFixed(1)} s per simulated day`);
+}
 let camMode = 'follow';
-const CAM_MODES = ['follow', 'orbit', 'top'];
+const CAM_MODES = ['follow', 'orbit', 'top', 'all nine'];
 
 addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
@@ -813,6 +1019,11 @@ addEventListener('keydown', (e) => {
   }
   if (k === '0') clearThreatSource();
   if (k === 'n') toggleMortality();
+  if (k === 'j') toggleBoxes();
+  if (k === 'y') toggleReport();
+  if (k === '.' || k === '>') cycleSpeed();
+  if (k === ',' || k === '<') cycleSpeed(1);
+  if (k === 'k') { grid.setOpen(!grid.open); grid.render(); }
   if (k === '[') setLight(arena.lightLevel - 0.12);
   if (k === ']') setLight(arena.lightLevel + 0.12);
   if (k === '-') setWater(arena.waterLevel - 0.12);
@@ -838,6 +1049,16 @@ function setLight(v) {
   $('sl-light').value = Math.round(arena.lightLevel * 100);
   $('lab-light').textContent = `${Math.round(arena.lightLevel * 100)}%`;
 }
+/** point the light and water controls at whichever cage is being driven */
+function syncEnvUI() {
+  const l = Math.round(arena.lightLevel * 100);
+  $('sl-light').value = l;
+  $('lab-light').textContent = `${l}%`;
+  const w = arena.waterLevel;
+  $('sl-water').value = Math.round(w * 100);
+  $('lab-water').textContent = w < 0.02 ? 'dry' : w < 0.35 ? 'shallow' : w < 0.7 ? 'wading' : 'deep';
+}
+
 function setWater(v) {
   arena.setWater(clamp(v, 0, 1));
   const w = arena.waterLevel;
@@ -888,6 +1109,7 @@ const PANELS = [
   { key: 'feed', label: 'what just happened', group: 'over the arena' },
   { key: 'threats', label: 'threats', group: 'over the arena' },
   { key: 'mortality', label: 'fighting & mortality', group: 'over the arena' },
+  { key: 'boxes', label: 'nine cages', group: 'over the arena' },
   { key: 'keys', label: 'keys', group: 'over the arena' },
 ];
 const panelOn = {};
@@ -962,11 +1184,17 @@ for (const h of document.querySelectorAll('.pcard > h4')) {
 }
 
 // ----------------------------------------------------------------- toolbar
-function cycleCamera() {
-  camMode = CAM_MODES[(CAM_MODES.indexOf(camMode) + 1) % CAM_MODES.length];
+function cycleCamera(to) {
+  camMode = to || CAM_MODES[(CAM_MODES.indexOf(camMode) + 1) % CAM_MODES.length];
   $('b-cam').textContent = `camera: ${camMode}`;
   controls.enabled = camMode === 'orbit';
-  camera.up.set(0, camMode === 'top' ? 0 : 1, camMode === 'top' ? 1 : 0);
+  const overhead = camMode === 'top' || camMode === 'all nine';
+  camera.up.set(0, overhead ? 0 : 1, overhead ? 1 : 0);
+  // the fog is set for one cage; seeing all nine means seeing 4.9 m of floor
+  if (scene.fog) {
+    scene.fog.near = camMode === 'all nine' ? 4 : 2.4;
+    scene.fog.far = camMode === 'all nine' ? 16 : 6.5;
+  }
   if (camMode === 'orbit') {
     controls.target.set(0, 0.04, 0);
     camera.position.set(0.72, 0.62, 1.05);
@@ -986,10 +1214,21 @@ function toggleTrail() {
   arena.trail.visible = !arena.trail.visible;
   $('b-trail').classList.toggle('on', arena.trail.visible);
 }
+/** set the autopilot on one animal and keep the button honest about it */
+function setAuto(ag, on) {
+  ag.auto = !!on;
+  if (ag === agents[player]) {
+    const b = $('b-auto');
+    if (b) b.classList.toggle('on', ag.auto);
+  }
+}
 function toggleAuto() {
   const ag = A();
-  ag.auto = !ag.auto;
-  $('b-auto').classList.toggle('on', ag.auto);
+  setAuto(ag, !ag.auto);
+  if (!ag.auto) ag.moveTarget = null;
+  logEvent('state', ag.auto
+    ? `<b>${ag.name}</b> is foraging on its own again`
+    : `you have the keys — <b>${ag.name}</b> is yours to drive`);
 }
 function toggleHelp() {
   $('keys').toggleAttribute('data-collapsed');
@@ -999,7 +1238,8 @@ function showWelcome(on) {
 }
 function rotateCue() {
   arena.rotateCue(Math.PI / 2);
-  for (const ag of agents) ag.brain.rotateCompass(Math.PI / 2);
+  // only the animals that can see this cue card
+  for (const ag of playerBox().agents) ag.brain.rotateCompass(Math.PI / 2);
   logEvent('spatial', 'cue card turned 90° — the head-direction compass turned with it');
 }
 function doReset() {
@@ -1009,8 +1249,16 @@ function doReset() {
     ag.brain.reset();
     ag.eatCount = 0; ag.drinkT = 0;
   }
-  arena.reset();
-  threats.reset();
+  for (const bx of grid.boxes) {
+    bx.arena.reset();
+    bx.arena.setLight(bx.cond.light);
+    bx.threats.reset();
+    bx.litter.reset();
+    bx.agents.length = 0;
+    bx.deaths = 0; bx.arrived = 0; bx.left = 0;
+  }
+  grid.setOpen(false);
+  grid.crossings = 0;
   mortality.reset();
   const mute = $('b-thr-mute');
   if (mute) mute.textContent = `sound: ${threats.muted ? 'off' : 'on'}`;
@@ -1019,17 +1267,18 @@ function doReset() {
     ag.carrying = null; ag.nurseT = 0; ag.nursingNow = false; ag.halfway = false;
     ag.fleeUntil = 0; ag.attackT = 0; ag.attacks = 0; ag.opto = NO_DRIVE;
   }
-  litter.reset();
   heldPup = null;
-  // send the grown-up offspring away and restore the founding pair
-  while (agents.length > 2) {
+  // every animal goes, and the nine cages are stocked again from scratch
+  while (agents.length) {
     const ag = agents.pop();
     if (ag.hasRig) { ag.mouse.root.visible = false; rigPool.push(ag.mouse); }
   }
-  herd.sync([]);
-  nameCount.M = 1; nameCount.F = 1;
-  player = Math.min(player, agents.length - 1);
-  for (const ag of agents) { ag.ageDays = 70; ag.mature = true; ag.lastSire = null; }
+  for (const bx of grid.boxes) bx.herd.sync([]);
+  nameCount.M = 0; nameCount.F = 0;
+  stockCages();
+  player = Math.max(0, agents.findIndex((g) => g.box === grid.boxes[4]));
+  followBox();
+  setAuto(agents[player], true);
   buildColonyCards();
   marker.visible = false;
   feedList.textContent = '';
@@ -1041,6 +1290,9 @@ function doReset() {
   lfpTrace.i = 0; daTrace.i = 0;
 }
 if ($('b-mortality')) $('b-mortality').onclick = () => toggleMortality();
+if ($('b-boxes')) $('b-boxes').onclick = () => toggleBoxes();
+if ($('b-speed')) $('b-speed').onclick = () => cycleSpeed();
+if ($('b-report')) $('b-report').onclick = () => toggleReport();
 $('b-cam').onclick = cycleCamera;
 $('b-pause').onclick = togglePause;
 $('b-reset').onclick = doReset;
@@ -1071,6 +1323,9 @@ function steerTo(ag, goal, out, urgency = 0.5) {
 
 function driveAuto(ag, dt, out) {
   const b = ag.brain, m = ag.mouse;
+  // this animal's own cage, shadowing the module-level "cage you are looking
+  // at" aliases, so everything below reads the conditions it is actually in
+  const arena = ag.box.arena, litter = ag.box.litter;
   const mate = other(agents.indexOf(ag));
   let goal = null, urgency = 0.45, sniff = false;
 
@@ -1159,9 +1414,46 @@ function driveAuto(ag, dt, out) {
     }
   }
 
+  // ---- is what it needs even in this cage? ----
+  // A thirsty mouse in the cage with no dish has to leave it, and with the
+  // tunnels open it can. This is what redistributes the colony.
+  if (!goal && grid.open) {
+    const noWater = !arena.dish && arena.waterLevel < 0.05;
+    const noFood = !arena.cheeses.some((c) => !c.eaten);
+    const needWater = wantDrink > 0.45 && noWater;
+    const needFood = wantEat > 0.45 && noFood;
+    const flee = b.fear > 0.5 || b.aversion > 0.5;
+    if (needWater || needFood || flee) {
+      const mouth = grid.nearestMouth(ag.box, m.x, m.z, (far) => (
+        needWater ? !!far.arena.dish
+          : needFood ? far.arena.cheeses.some((c) => !c.eaten)
+            : true));
+      if (mouth) {
+        goal = mouth.mouth;
+        urgency = flee ? 1 : 0.8;
+        ag.leaving = needWater ? 'water' : needFood ? 'food' : 'the conditions';
+      }
+    }
+  }
+
+  // ---- a tunnel it has not been through is the most interesting thing in
+  // the cage. Mice explore novel space hard, and that — not hunger — is what
+  // actually redistributes a connected colony.
+  if (!goal && grid.open && wantEat < 0.85 && wantDrink < 0.85 && b.fear < 0.4) {
+    ag.roamT = (ag.roamT || 0) - dt;
+    if (ag.roamT <= 0 || !ag.roam) {
+      const mouth = grid.nearestMouth(ag.box, m.x, m.z,
+        // a cage it has no map of yet wins; otherwise any of them, sometimes
+        (far) => !b.envs[far.id] || Math.random() < 0.45);
+      ag.roam = mouth ? mouth.mouth : null;
+      ag.roamT = mouth ? 14 : 6;
+    }
+    if (ag.roam) { goal = ag.roam; urgency = 0.55; }
+  }
+
   if (goal) {
     /* a pup takes precedence */
-  } else if (wantDrink > 0.5 && wantDrink >= wantEat) {
+  } else if (wantDrink > 0.5 && wantDrink >= wantEat && arena.dish) {
     goal = { x: arena.dish.x, z: arena.dish.z };
     urgency = wantDrink;
   } else if (wantEat > 0.3) {
@@ -1184,6 +1476,17 @@ function driveAuto(ag, dt, out) {
     if (!ag.wander || ag.wanderT <= 0) {
       // prefer the perimeter, more strongly when the lights are up
       const edge = 0.42 + 0.14 * (1 - arena.lightLevel);
+      // with the tunnels open, some of that wandering goes through one —
+      // which is all it takes for the colony to redistribute itself
+      if (grid.open && Math.random() < 0.3) {
+        const mouth = grid.nearestMouth(ag.box, m.x, m.z);
+        if (mouth) {
+          ag.wander = { x: mouth.mouth.x, z: mouth.mouth.z };
+          ag.wanderT = 3 + Math.random() * 3;
+          goal = ag.wander;
+          return steerTo(ag, goal, out, 0.4), out;
+        }
+      }
       let a = Math.random() * TAU;
       ag.wander = { x: clamp(Math.cos(a) * edge * 1.25, -0.52, 0.52), z: clamp(Math.sin(a) * edge * 1.25, -0.52, 0.52) };
       // never wander into the contaminated corner: try a few other directions
@@ -1228,6 +1531,7 @@ scene.add(marker);
 
 let downAt = null;
 let heldPup = null;
+let heldBox = null;
 worldCanvas.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
 worldCanvas.addEventListener('pointerup', (e) => {
   if (!downAt) return;
@@ -1241,7 +1545,9 @@ worldCanvas.addEventListener('pointerup', (e) => {
   // the pup-retrieval test: pick a pup up by hand, drop it away from the nest,
   // and watch whether the mother goes and fetches it
   if (!heldPup) {
-    const pup = litter.pickAt(clickRay);
+    // picking uses real meshes, so the parent transform is already applied
+    let pup = null;
+    for (const bx of grid.boxes) { pup = bx.litter.pickAt(clickRay); if (pup) { heldBox = bx; break; } }
     if (pup) {
       heldPup = pup;
       pup.mesh.scale.multiplyScalar(1.35);
@@ -1250,10 +1556,17 @@ worldCanvas.addEventListener('pointerup', (e) => {
     }
   }
   if (!clickRay.ray.intersectPlane(groundPlane, hitPoint)) return;
-  const lim = arena.half - 0.03;
+  // the plane hit is in world coordinates; everything below it is cage-local
+  const hitBox = grid.boxAt(hitPoint.x, hitPoint.z);
+  if (!hitBox) return;
+  const local = hitBox.toLocal(hitPoint.x, hitPoint.z);
+  hitPoint.x = local.x; hitPoint.z = local.z;
+  const lim = hitBox.arena.half - 0.03;
   if (heldPup) {
     const px = clamp(hitPoint.x, -lim, lim), pz = clamp(hitPoint.z, -lim, lim);
-    litter.displace(heldPup, px, pz);
+    if (hitBox !== heldBox) { heldPup.mesh.scale.setScalar(heldPup.mesh.scale.x / 1.35); heldPup = null; return; }
+    const litter = heldBox.litter;
+    heldBox.litter.displace(heldPup, px, pz);
     heldPup.mesh.scale.setScalar(heldPup.mesh.scale.x / 1.35);
     const far = litter.nest ? Math.hypot(px - litter.nest.x, pz - litter.nest.z) : 0;
     logEvent('state', far > 0.12
@@ -1262,11 +1575,17 @@ worldCanvas.addEventListener('pointerup', (e) => {
     heldPup = null;
     return;
   }
-  const ag = A();
+  // clicking in another cage takes control of an animal in that cage, which
+  // is the quickest way to go and look at what is happening over there
+  let ag = A();
+  if (hitBox !== ag.box) {
+    const there = agents.findIndex((g) => g.box === hitBox && !g.dead);
+    if (there >= 0) { takeControl(there); ag = A(); }
+    else return;
+  }
   ag.moveTarget = { x: clamp(hitPoint.x, -lim, lim), z: clamp(hitPoint.z, -lim, lim) };
-  ag.auto = false;
-  $('b-auto').classList.remove('on');
-  marker.position.set(ag.moveTarget.x, 0.005, ag.moveTarget.z);
+  const w = ag.box.toWorld(ag.moveTarget.x, ag.moveTarget.z);
+  marker.position.set(w.x, 0.005, w.z);
   marker.visible = true;
 });
 
@@ -1324,6 +1643,8 @@ const fwd = new THREE.Vector3();
 const camWant = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 const autoCmd = { throttle: 0, turn: 0, run: false, sniff: false };
+/** an animal with no autopilot and nobody driving it does nothing */
+const NO_CMD = Object.freeze({ throttle: 0, turn: 0, run: false, sniff: false });
 let last = performance.now();
 let sessionT = 0;
 let mapAcc = 0, valueAcc = 0, hudAcc = 0, autoAcc = 0;
@@ -1343,25 +1664,35 @@ const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padSt
 
 function stepAgent(ag, i, dt) {
   const b = ag.brain, m = ag.mouse;
+  const arena = ag.box.arena, litter = ag.box.litter;
+  const driving = ag === agents[player];
   // a dead animal is a body in the cage: no commands, no brain, no state
   if (ag.dead) {
     ag.state = 'DEAD';
     if (typeof m.update === 'function') m.update(dt, { throttle: 0, turn: 0, run: false, sniff: false }, b);
     return null;
   }
+  // Every animal is on autopilot unless you have taken the keys off it. The
+  // one you are driving reads the keyboard, and touching a key is itself the
+  // instruction to stop driving itself.
   let cmd;
-  if (ag.auto) {
+  if (driving) {
+    readInput();
+    if (input.throttle || input.turn) {
+      ag.moveTarget = null;
+      if (ag.auto) setAuto(ag, false);
+    }
+  }
+  if (ag.moveTarget) {
+    // a click sends it there whether or not the autopilot is on, and it picks
+    // its own business back up when it arrives
+    const left = steerTo(ag, ag.moveTarget, autoCmd, 0.5);
+    if (left < 0.05) ag.moveTarget = null;
+    cmd = autoCmd;
+  } else if (ag.auto) {
     cmd = driveAuto(ag, dt, autoCmd);
   } else {
-    readInput();
-    if (input.throttle || input.turn) ag.moveTarget = null;   // the keys take over
-    if (ag.moveTarget) {
-      const left = steerTo(ag, ag.moveTarget, autoCmd, 0.5);
-      if (left < 0.05) ag.moveTarget = null;
-      cmd = autoCmd;
-    } else {
-      cmd = input;
-    }
+    cmd = driving ? input : NO_CMD;
   }
 
   // a mating bout holds both animals still
@@ -1383,6 +1714,12 @@ function stepAgent(ag, i, dt) {
   if (od.turnBias) eff.turn = clamp(eff.turn + od.turnBias, -1, 1);
 
   m.update(dt, eff, b);
+
+  // ---- through a tunnel into the next cage ----
+  if (grid.open && sessionT > (ag.crossT || 0)) {
+    const cross = grid.crossingFor(ag);
+    if (cross) transferAgent(ag, cross);
+  }
 
   const nx = m.x + Math.sin(m.heading) * 0.032;
   const nz = m.z + Math.cos(m.heading) * 0.032;
@@ -1494,7 +1831,7 @@ function stepAgent(ag, i, dt) {
 
   st.mature = ag.mature;
   // crowding escalates male aggression, in a cage as in a colony room
-  st.crowding = clamp(agents.length / 40, 0, 1);
+  st.crowding = clamp(ag.box.population / 6, 0, 1);
   // how close the nearest live pup is: what a male's BSTrh is answering to
   st.pupNear = litter.pups && litter.pups.length
     ? Math.max(0, ...litter.pups.filter((q) => !q.dead && !q.carried)
@@ -1573,6 +1910,7 @@ function stepMating(dt) {
     for (let j = i + 1; j < agents.length && !pair; j++) {
       const a = agents[i], b = agents[j];
       if (a.sex === b.sex || !a.mature || !b.mature || a.dead || b.dead) continue;
+      if (a.box !== b.box) continue;
       if (!a.brain.drives.mate || !b.brain.drives.mate) continue;
       if (Math.hypot(a.mouse.x - b.mouse.x, a.mouse.z - b.mouse.z) >= 0.085) continue;
       const f = a.sex === 'F' ? a : b, m = a.sex === 'F' ? b : a;
@@ -1630,6 +1968,7 @@ function stepBirth() {
 }
 
 function stepGestation(fem) {
+  const litter = fem.box.litter;
   {
     const b = fem.brain;
     const pct = Math.floor(b.gestation * 100);
@@ -1650,6 +1989,28 @@ function stepGestation(fem) {
   }
 }
 
+/** one step of the world, of length dt. Called more than once per frame when
+ *  the simulation is running faster than real time. */
+function stepWorld(dt) {
+  sessionT += dt;
+  for (const bx of grid.boxes) {
+    bx.threats.update(dt, sessionT);
+    stepCondition(bx, dt);
+  }
+  stepMating(dt);
+  stepAging(dt);
+  mortality.step(dt);
+  stepBirth(dt);
+  for (let i = 0; i < agents.length; i++) stepAgent(agents[i], i, dt);
+  const pbox = playerBox();
+  for (const bx of grid.boxes) {
+    // each cage animates around whichever animal is in it
+    const focus = bx === pbox ? A() : (bx.agents.find((g) => !g.dead) || A());
+    bx.arena.update(dt, sessionT, focus.mouse, focus.brain);
+    bx.litter.update(dt, sessionT, bx.agents);
+  }
+}
+
 function frame(now) {
   const dt = Math.min(0.05, Math.max(0.0005, (now - last) / 1000));
   last = now;
@@ -1659,42 +2020,58 @@ function frame(now) {
   lodAcc += dt;
   if (lodAcc > 0.4) { lodAcc = 0; updateLOD(); }
 
+  // Faster than real time means more steps of the same length, not longer
+  // steps: every integrator here — Poisson spiking, the 1 kHz field
+  // potential, the theta phase — is only valid at a sane dt, and stretching
+  // it would quietly distort all of them.
+  //
+  // The steps are a fixed length and the leftover is carried, so the
+  // multiplier means what it says whatever the frame rate is doing. The cap
+  // is what stops a slow frame asking for more steps than the next frame can
+  // afford, which is how a simulation loop spirals.
   if (!paused) {
-    sessionT += dt;
-    threats.update(dt, sessionT);
-    stepMating(dt);
-    stepAging(dt);
-    mortality.step(dt);
-    stepBirth(dt);
-    for (let i = 0; i < agents.length; i++) stepAgent(agents[i], i, dt);
-    arena.update(dt, sessionT, A().mouse, A().brain);
-    litter.update(dt, sessionT, agents);
+    simAcc += dt * simSpeed;
+    const cap = 8 * simSpeed;
+    let n = 0;
+    while (simAcc >= SUB_STEP && n < cap) { stepWorld(SUB_STEP); simAcc -= SUB_STEP; n++; }
+    if (n >= cap) simAcc = 0;              // gave up on the backlog
+    simStepsLast = n;
 
-    // one draw call for every animal without a rig
-    proxyScratch.length = 0;
-    for (const ag of agents) {
-      if (ag.hasRig) continue;
-      // let the instanced bodies show the defensive state the rig would
-      ag.mouse.freeze = ag.brain.freeze || 0;
-      ag.mouse.fear = ag.brain.fear || 0;
-      ag.mouse.dead = !ag.brain.alive;
-      proxyScratch.push(ag.mouse);
+    // one draw call per cage for every animal in it without a rig
+    for (const bx of grid.boxes) {
+      proxyScratch.length = 0;
+      for (const ag of bx.agents) {
+        if (ag.hasRig) continue;
+        // let the instanced bodies show the defensive state the rig would
+        ag.mouse.freeze = ag.brain.freeze || 0;
+        ag.mouse.fear = ag.brain.fear || 0;
+        ag.mouse.dead = !ag.brain.alive;
+        proxyScratch.push(ag.mouse);
+      }
+      bx.herd.sync(proxyScratch);
     }
-    herd.sync(proxyScratch);
   }
 
   // ---- camera follows whichever mouse you are driving ----
-  const pm = A().mouse;
+  // Bodies are positioned in cage-local coordinates inside an offset group, so
+  // anything the camera or a raycast touches has to be converted to world.
+  const pa = A();
+  const pm = pa.mouse;
+  const px = worldX(pa, pm.x), pz = worldZ(pa, pm.z);
   fwd.set(Math.sin(pm.heading), 0, Math.cos(pm.heading));
   if (camMode === 'follow') {
     const k = Math.min(1, pm.speed / MAX_RUN);
-    camWant.set(pm.x, 0, pm.z).addScaledVector(fwd, -(0.44 + 0.2 * k));
+    camWant.set(px, 0, pz).addScaledVector(fwd, -(0.44 + 0.2 * k));
     camWant.y = 0.23 + 0.05 * k;
     camera.position.lerp(camWant, 1 - Math.exp(-dt * 4.5));
-    camLook.set(pm.x, 0.028, pm.z).addScaledVector(fwd, 0.14);
+    camLook.set(px, 0.028, pz).addScaledVector(fwd, 0.14);
     camera.lookAt(camLook);
   } else if (camMode === 'top') {
-    camera.position.set(0, 1.42, 0);
+    camera.position.set(pa.box.origin.x, 1.42, pa.box.origin.z);
+    camera.lookAt(pa.box.origin.x, 0, pa.box.origin.z);
+  } else if (camMode === 'all nine') {
+    // high enough that 4.9 m of floor fits the vertical field of view
+    camera.position.set(0, PITCH * 4.3, 0.001);
     camera.lookAt(0, 0, 0);
   } else {
     controls.update();
@@ -1708,9 +2085,12 @@ function frame(now) {
   const brain = A().brain;
   activation = brain.regionActivation();
   if (!paused) {
-    if (shown('spikes')) raster.draw(brain, dt);
-    lfpTrace.push(brain, dt);
-    daTrace.push(brain, dt);
+    // the traces are a record of simulated time, so they scroll at the rate
+    // the simulation is actually running at
+    const simDt = simStepsLast * SUB_STEP;
+    if (shown('spikes')) raster.draw(brain, simDt);
+    lfpTrace.push(brain, simDt);
+    daTrace.push(brain, simDt);
   }
   if (shown('waves')) lfpTrace.draw();
   if (shown('reward')) daTrace.draw();
@@ -1755,7 +2135,8 @@ function frame(now) {
   const tgt = A().moveTarget;
   marker.visible = !!tgt;
   if (tgt) {
-    marker.position.set(tgt.x, 0.005, tgt.z);
+    const wt = A().box.toWorld(tgt.x, tgt.z);
+    marker.position.set(wt.x, 0.005, wt.z);
     marker.scale.setScalar(1 + 0.16 * Math.sin(sessionT * 7));
   }
 
@@ -1779,6 +2160,10 @@ function updateColony() {
     c.state.textContent = g.state.toLowerCase();
     c.age.textContent = g.mature ? 'adult' : `${Math.floor(g.ageDays)}d`;
     c.age.classList.toggle('juv', !g.mature);
+    if (c.cage) {
+      c.cage.textContent = g.box ? g.box.cond.name : '';
+      c.cage.style.opacity = g.box === playerBox() ? '1' : '0.55';
+    }
     const set = (k, v) => {
       if (c.fills[k]) c.fills[k].style.width = `${(clamp(v, 0, 1) * 100).toFixed(0)}%`;
     };
@@ -1800,10 +2185,11 @@ function updateColony() {
     } else if (g.dead) {
       const cz = CAUSES[g.cause];
       rep = `<span class="stray">dead</span> — ${cz ? cz.label : g.cause} · ${Math.round(g.ageDays)} days old`;
-    } else if (b.pupCount > 0 && litter.count) {
-      rep = `<span class="pg">${g.sex === 'F' ? 'nursing' : 'with'} ${litter.count}</span> · day ${litter.days.toFixed(0)}` +
-            (litter.strays ? ` · <span class="stray">${litter.strays} astray</span>` : '') +
-            (litter.lost ? ` · <span class="stray">${litter.lost} lost</span>` : '');
+    } else if (b.pupCount > 0 && g.box.litter.count) {
+      const lt = g.box.litter;
+      rep = `<span class="pg">${g.sex === 'F' ? 'nursing' : 'with'} ${lt.count}</span> · day ${lt.days.toFixed(0)}` +
+            (lt.strays ? ` · <span class="stray">${lt.strays} astray</span>` : '') +
+            (lt.lost ? ` · <span class="stray">${lt.lost} lost</span>` : '');
     } else {
       rep = `ate ${b.cheeseCount} · drank ${b.drinkCount} · mated ${b.mateCount}` +
             (b.litters ? ` · ${b.litters} litter${b.litters > 1 ? 's' : ''}` : '');
@@ -1888,12 +2274,21 @@ function updateHudInner() {
 
   const mb = $('b-mortality');
   if (mb) mb.classList.toggle('on', mortality.isOpen());
+  const bb = $('b-boxes');
+  if (bb) bb.classList.toggle('on', grid.isOpen());
+  const rb = $('b-report');
+  if (rb) rb.classList.toggle('on', report.isOpen());
+  if (report.isOpen() && (frameNo % 60) === 0) report.render();
+  followBox();
+  grid.render();
 
   const ob = $('b-optics');
   if (ob && ob.style.display !== 'none') ob.classList.toggle('on', opticsOpen());
 
   const sub = $('col-sub');
-  if (sub) sub.textContent = `${agents.length} mice${litter.count ? ` · ${litter.count} pups` : ''}` + (mateBout > 0 ? ' · mating' : '');
+  const pups = grid.boxes.reduce((n, bx) => n + (bx.litter ? bx.litter.count : 0), 0);
+  if (sub) sub.textContent = `${agents.filter((g) => !g.dead).length} mice${pups ? ` · ${pups} pups` : ''}`
+    + (grid.open ? ' · connected' : '');
 }
 
 // Fold any floating card by its header. Delegated, so cards mounted later

@@ -168,6 +168,17 @@ export class Mortality {
   now() { return this.ctx.now ? this.ctx.now() : 0; }
   agents() { return this.ctx.getAgents ? this.ctx.getAgents() : []; }
   litter() { return this.ctx.getLitter ? this.ctx.getLitter() : null; }
+  /** every litter in the colony — one per cage, when there is more than one */
+  litters() {
+    if (this.ctx.getLitters) return this.ctx.getLitters().filter(Boolean);
+    const one = this.litter();
+    return one ? [one] : [];
+  }
+  /** the litter this animal is actually standing in */
+  litterFor(ag) {
+    if (this.ctx.litterFor) return this.ctx.litterFor(ag);
+    return this.litter();
+  }
   log(group, html) { if (this.ctx.onEvent) this.ctx.onEvent(group, html); }
 
   /** the survival bookkeeping an animal needs, created on first sight */
@@ -195,7 +206,7 @@ export class Mortality {
   // ------------------------------------------------------------- the frame
   step(dt) {
     if (dt <= 0) return;
-    this.attachLitter(this.litter());
+    for (const l of this.litters()) this.attachLitter(l);
     this.stepFights(dt);
     this.stepInfanticide(dt);
     this.stepHealth(dt);
@@ -284,11 +295,11 @@ export class Mortality {
 
   // ------------------------------------------------------------- infanticide
   stepInfanticide(dt) {
-    const litter = this.litter();
-    if (!litter || !litter.pups || !litter.pups.length) return;
     const agents = this.agents();
     for (const ag of agents) {
       if (ag.dead) continue;
+      const litter = this.litterFor(ag);
+      if (!litter || !litter.pups || !litter.pups.length) continue;
       const b = ag.brain;
       if (!this.infanticideOn || (b.infanticide || 0) < 0.4) { ag.pupAttackT = 0; continue; }
       // the nearest pup he can actually reach
@@ -302,13 +313,14 @@ export class Mortality {
       // the mother drives him off: a lactating female near her pups is the
       // most aggressive animal in the cage
       const guarded = agents.some((g) => !g.dead && g !== ag && g.brain.lactating
+        && g.box === ag.box
         && Math.hypot(g.mouse.x - pup.x, g.mouse.z - pup.z) < 0.18);
       if (guarded) { ag.pupAttackT = 0; continue; }
 
       ag.pupAttackT = (ag.pupAttackT || 0) + dt;
       if (ag.pupAttackT < 1.1) continue;
       ag.pupAttackT = 0;
-      this.killPup(pup, 'infanticide', ag);
+      this.killPup(pup, 'infanticide', ag, litter);
     }
   }
 
@@ -335,8 +347,8 @@ export class Mortality {
   }
 
   /** a male kills a pup he has found */
-  killPup(pup, cause, by) {
-    const litter = this.litter();
+  killPup(pup, cause, by, inLitter) {
+    const litter = inLitter || this.litterFor(by) || this.litter();
     if (!litter || pup.dead) return;
     if (typeof litter.killPup === 'function') {
       litter.killPup(pup);                      // fires onPupLost(pup, 'killed')
@@ -622,12 +634,13 @@ export class Mortality {
       causes.appendChild(row);
     }
 
-    const litter = this.litter();
+    const all = this.litters();
+    const sum = (k) => all.reduce((n, l) => n + (l[k] || 0), 0);
     const pupsEl = card.querySelector('#mo-pups');
     if (pupsEl) {
-      pupsEl.textContent = litter && litter.born
-        ? `pups: ${litter.count || 0} alive · ${litter.lost || 0} lost · ${litter.eaten || 0} eaten`
-          + (litter.carcasses ? ` · ${litter.carcasses} uncollected` : '')
+      pupsEl.textContent = sum('born')
+        ? `pups: ${sum('count')} alive · ${sum('lost')} lost · ${sum('eaten')} eaten`
+          + (sum('carcasses') ? ` · ${sum('carcasses')} uncollected` : '')
         : '';
     }
 

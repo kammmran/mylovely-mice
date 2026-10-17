@@ -1,10 +1,16 @@
 # mylovely-mice
 
-Two mice in a 3-D open field, each wired to a running model of its own brain.
+Nine cages of mice, each under different conditions, every animal wired to a
+running model of its own brain — and tunnels you can open between them.
 
-You drive one of them. Every step, turn, sniff, drink and encounter is fed into
-~680 model neurons spread across 37 real anatomical regions, and the panels show
-what those neurons do while it happens.
+You drive one of them. Every step, turn, sniff, drink, fight and encounter is
+fed into ~700 model neurons spread across 38 real anatomical regions, and the
+panels show what those neurons do while it happens. The nine cages hold a
+control, one with no water, one with almost no food, one too bright, one that
+smells of fox, one that startles them, one of males with nowhere to go, one
+overcrowded and one with plenty of everything. Open the tunnels and the colony
+redistributes itself — and the hippocampus of every animal that crosses builds
+a new map for the cage it has arrived in.
 
 ![arena and brain panels](docs/screenshot.png)
 
@@ -24,9 +30,15 @@ Three.js is loaded from a CDN, so the first load needs a network connection.
 
 There is nothing to build, so the repository *is* the site.
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) publishes it on
-every push to `main`. To turn it on once: **Settings → Pages → Build and
-deployment → Source: GitHub Actions**. The page then lives at
-`https://<user>.github.io/mylovely-mice/`.
+every push to `main`, at `https://<user>.github.io/mylovely-mice/`.
+
+The workflow turns Pages on itself the first time it runs (`enablement: true`).
+If your organisation blocks that, the job fails with *"Get Pages site failed …
+Not Found"*, and the fix is to set it by hand once: **Settings → Pages → Build
+and deployment → Source: GitHub Actions**.
+
+Every path in the page is relative, so it works from the `/mylovely-mice/`
+subpath without configuration.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and
 pull request. With no bundler and no test runner, it checks the things that
@@ -42,8 +54,9 @@ and that `index.html` only references files that are in the repository.
 | `A` `D` / `←` `→` | turn |
 | `shift` | run |
 | `space` | sniff, rear up |
-| `X` | swap which mouse you drive (or click one in the colony panel) |
-| `O` | autopilot for the mouse you are driving |
+| `X` | watch the next mouse (or click one in the colony panel, or click its cage) |
+| `O` | take the keys off the autopilot, and give them back |
+| `.` `,` | run faster (1× 2× 4× 8×) / back to real time |
 | `C` | camera: follow → orbit → overhead |
 | `V` | learned-value overlay on the floor |
 | `T` | path trail |
@@ -55,8 +68,25 @@ and that `index.html` only references files that are in the repository.
 | `1`–`6` | frighten them: cat call, owl swoop, noise burst, fox odour, cat collar, rotten smell |
 | `0` | take the odour source away |
 | `N` | fighting & mortality |
+| `J` | the nine cages panel |
+| `Y` | the session report |
+| `K` | open or shut the tunnels between them |
+| click the floor | send it there — it goes, then carries on foraging |
 | click a pup | lift it; click again to set it down |
 | `P` `R` `H` | pause, reset, hide help |
+
+**Every mouse forages for itself.** Selecting one with `X`, or by clicking it in
+the panel, means you are now *watching* that one — it keeps its autopilot. Press
+`O`, or touch `W`/`A`/`S`/`D`, and the keys are yours; press `O` again to hand it
+back. Clicking the floor sends it to that spot and then lets it get on with
+whatever it was doing.
+
+**Running faster.** `.` cycles 1× → 2× → 4× → 8×. The simulation takes more
+steps per frame rather than longer ones — every integrator in here, from
+Poisson spiking to the 1 kHz field potential to theta phase, is only valid at a
+sane step length, and stretching it would quietly distort all of them. At 8× a
+simulated day takes 0.6 s, so a pregnancy runs in about twelve seconds and a
+mouse can die of old age while you watch.
 
 The colony panel also carries the three drive switches. Turning one off silences
 that circuit and removes the behaviour: with **mating** off, libido stays at zero,
@@ -132,6 +162,9 @@ rather than decoration:
 | cMPOA and BSTrh, a millimetre apart, carrying paternal and infanticidal states | Tsuneoka 2015 |
 | Pups chilling out of the nest, and the dam eating the body afterwards | Lagerspetz 1966; Weber & Olsson 2008 |
 | Mortality doubling every 100 days, for a median lifespan near 900 | Mouse Phenome Database |
+| Animals piling into the most-connected pen once the pens are connected | Calhoun 1962 |
+| A separate hippocampal map per cage, switching at the tunnel and coming back on return | Muller & Kubie 1987; Leutgeb 2005 |
+| Grid modules keeping their spacing across the move while place cells remap | Fyhn et al. 2007 |
 | Driving CA3 raises CA1 through the Schaffer collateral, and only CA1 | Allen Connectivity Atlas |
 
 Full per-region descriptions and citations are in
@@ -271,6 +304,62 @@ the mice still hear the call and still smell the fox, and do nothing about
 either — roughly what an animal with no working vomeronasal organ does when it
 meets a cat.
 
+## Nine cages
+
+Press `J`. The colony is not one box but nine, in a 3×3 grid, each held under
+different conditions and each with its own animals, its own litter and its own
+brains. Press `C` until the camera says **all nine** to see the whole grid.
+
+```
+   no water      bright light    scarce food
+   all male      CONTROL         well provisioned
+   crowded       fox odour       intermittent noise
+```
+
+The control sits in the middle on purpose — see below. The others each isolate
+one thing: a cage with no water dish at all, a cage with one piece of cheese
+instead of three, a cage with the lights at full, a cage with fox odour in the
+corner, a cage that fires a startling noise burst every twenty seconds, a cage
+of four unrelated males with nowhere to get away from each other, a cage with
+eight animals in it, and a cage with plenty of everything and the lights down.
+Every panel, slider and hotkey acts on **the cage you are currently driving in**,
+and clicking any cage in the grid takes control of an animal inside it.
+
+Leave them shut and you have nine experiments running side by side: thirst and
+dehydration in one, AgRP firing and foraging in another, thigmotaxis under
+bright light, avoidance of the fox corner, startle habituation, a dominance
+order forming among the four males.
+
+**Then press `K` and open the tunnels.**
+
+### What happens then
+
+**It becomes Calhoun's experiment.** In 1962 he connected pens with ramps and
+found that the animals stopped distributing themselves evenly: because the end
+pens had one connection and the middle pens two, they piled into the middle —
+the *behavioural sink* — and the pathology that followed came from that
+aggregation rather than from any shortage. A 3×3 grid has the same geometry for
+free: the corners have two tunnels, the edges three, and the centre four. The
+panel tracks the share of the colony in the busiest cage, against the 11% an
+even split would give. The centre is the control cage precisely so that
+crowding there is about connectivity and not about what is in it.
+
+**Before that, the conditions drive the traffic.** A thirsty mouse in the cage
+with no dish will now leave it, because water is the drive that moves a mouse
+first — days without it against weeks without food. Hunger moves them out of
+the one-cheese cage. Fear moves them out of the fox-odour cage. The event feed
+names the reason each time an animal goes through.
+
+**And the hippocampus remaps.** A place cell does not carry one map around: it
+has a separate, independent map for every environment it knows. Cross a tunnel
+and watch the rate map in the panel start again from nothing — that is the new
+cage's map being built. Go back and the first map comes back intact. Grid cells
+behave differently, as they do in a real animal: the module shifts and rotates
+but keeps its spacing, so the metric survives the move. Head-direction cells do
+not remap at all, which is what lets an animal know which way it is facing in a
+cage it has never been in. The feed reports which of the nine maps the animal
+has just switched to.
+
 ## Dying
 
 Press `N`, or the **mortality** button. Mice in this colony can be killed and
@@ -358,6 +447,9 @@ src/world/mousedata.js  every physical constant, with units and citations
 src/world/pups.js       the litter: nest, altricial pups, growth, ultrasonic calls
 src/world/threats.js    predator calls, looming shadows, aversive odours
 src/world/mortality.js  fighting, infanticide, and the causes of death
+src/world/colonygrid.js nine cages, their conditions, and the tunnels between
+src/report.js           the session report, its findings, and the downloads
+src/pdf.js              a small dependency-free PDF writer, for the long form
 src/optogenetics.js     opsins, implants, light, region-to-behaviour mapping
 src/view/brainview.js   3-D Allen CCF brain, lit by live firing rate
 src/view/plots.js       spike raster, LFP and dopamine traces, rate maps, polar tuning
@@ -425,6 +517,43 @@ back. Beyond that:
   shared time axis.
 - **Colony** — both animals' drives side by side, with the environment sliders
   and the three drive switches.
+
+## The report
+
+Press `Y`. It answers "what actually happened in there", in three parts.
+
+**What is interesting** comes first, and it is generated rather than written.
+A set of rules each look for one pattern in the session and, if it is there,
+say so with the number in it and the work it reproduces — the share of the
+colony that has ended up in the most-connected cage against the 11% an even
+split would give; which cages emptied and why; how many hippocampal maps the
+colony is now holding; who is doing the biting and who is taking it; whether
+pups were lost to cold or to a male; which males have switched out of
+infanticide and which have not. A rule that finds nothing says nothing, so the
+report only ever describes what this particular run did.
+
+**Every mouse** is a table: where it lives, where it has been, how old it is,
+what it has eaten and drunk, how often it has mated, bites given and taken,
+body condition, tunnel crossings, how many separate maps its hippocampus is
+carrying, and how it died if it did. Underneath that is the whole timeline,
+not just the last few lines the feed keeps.
+
+**The PDF is the long form.** Markdown and CSV give you the tables; the PDF
+gives you every animal in full — age, cage history and tunnel crossings, body
+condition and weight loss, everything it has eaten, drunk and mated, bites
+given and taken, dominance, hunger, thirst, libido, oestrus or paternal state,
+fear and corticosterone, freezing and avoidance, the hippocampal maps it is
+carrying, its theta frequency and dopamine rate and learned value — and then a
+firing rate for **every one of the 38 modelled regions in that animal's brain**
+at the moment the report was taken, followed by that animal's own timeline.
+For a full colony that is thirty-odd pages.
+
+It downloads as **PDF**, as **Markdown** — the thing you would send someone —
+or as **CSV**, one row per animal, for anything that wants a spreadsheet. The
+copy button puts the Markdown on the clipboard. The PDF is generated in the
+browser with no library: [`src/pdf.js`](src/pdf.js) writes the file itself,
+because a document that only needs the standard fonts does not need any of a
+PDF library, and this project has no build step to add one to.
 
 ## Caveats
 

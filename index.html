@@ -344,7 +344,7 @@
   .wcard h1{margin:0 0 4px;font-size:21px;letter-spacing:-.2px;display:flex;align-items:center;gap:9px}
   .wcard h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
   .wcard .lede{margin:0 0 18px;color:var(--ink2);font-size:13.5px;line-height:1.6}
-  .wtry{display:grid;grid-template-columns:repeat(3,1fr);gap:11px;margin-bottom:17px}
+  .wtry{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;margin-bottom:17px}
   .wtry div{background:#101a26;border:1px solid var(--line);border-radius:9px;padding:11px 12px}
   .wtry h3{margin:0 0 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
   .wtry p{margin:0;font-size:11.5px;line-height:1.5;color:var(--ink2)}
@@ -380,13 +380,18 @@
       <button class="btn" id="b-cam" title="Switch between following the mouse, free orbit, and an overhead view (C)">camera: follow</button>
       <button class="btn" id="b-value" title="Paint the floor with how valuable the mouse has learned each spot to be (V)">value map</button>
       <button class="btn on" id="b-trail" title="Show where the mouse has been (T)">trail</button>
-      <button class="btn" id="b-auto" title="Let the mouse forage by itself (O)">autopilot</button>
+      <button class="btn on" id="b-auto" title="Every mouse forages by itself. Turn this off to take the keys (O)">autopilot</button>
+      <button class="btn" id="b-report"
+        title="What has happened to every mouse, what is worth looking at, and a download of both (Y)">report</button>
+      <button class="btn" id="b-speed" title="Run the simulation faster than real time: 1x, 2x, 4x, 8x (. to cycle, , to go back to 1x)">speed 1×</button>
       <span class="tdiv"></span>
       <div class="menuwrap">
         <button class="btn" id="b-panels" title="Show or hide any panel">panels ▾</button>
         <div class="menu" id="panel-menu" hidden></div>
       </div>
       <button class="btn" id="b-signals" title="Spectrum, band power, theta-gamma coupling, spike statistics and body signals (B)">signals</button>
+      <button class="btn" id="b-boxes"
+        title="Nine cages under different conditions, and the tunnels between them (J). K opens and shuts the tunnels.">nine cages</button>
       <button class="btn" id="b-mortality"
         title="Fighting, infanticide and the causes of death in a mouse colony (N)">mortality</button>
       <button class="btn" id="b-optics" style="display:none"
@@ -473,7 +478,8 @@
           <kbd>B</kbd> signals &nbsp; <kbd>G</kbd> optogenetics<br>
           <kbd>[</kbd><kbd>]</kbd> light &nbsp; <kbd>-</kbd><kbd>=</kbd> water &nbsp; <kbd>M</kbd> cue<br>
           <kbd>1</kbd>–<kbd>6</kbd> threats &nbsp; <kbd>0</kbd> clear the smell<br>
-          <kbd>N</kbd> fighting &amp; mortality<br>
+          <kbd>N</kbd> mortality &nbsp; <kbd>J</kbd> nine cages &nbsp; <kbd>K</kbd> tunnels<br>
+          <kbd>.</kbd> faster &nbsp; <kbd>,</kbd> real time &nbsp; <kbd>Y</kbd> report<br>
           <kbd>P</kbd> pause &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>?</kbd> help
         </div>
       </div>
@@ -554,9 +560,9 @@
 <div id="welcome" class="hide">
   <div class="wcard">
     <h1><span class="dot"></span>mylovely-mice</h1>
-    <p class="lede">Two mice in an open field — a male and a female — each wired to a working model of
-      its own brain. Drive one around and the panels on the right show what its neurons are doing,
-      moment by moment.</p>
+    <p class="lede">Nine cages of mice, each kept under different conditions, every animal wired to a
+      working model of its own brain. Drive one around and the panels on the right show what its
+      neurons are doing, moment by moment.</p>
     <div class="wtry">
       <div><h3>1 · move</h3><p>Click anywhere on the floor to send the mouse there, or drive it
         with <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>.</p></div>
@@ -564,6 +570,8 @@
         then fade as the mouse learns where to look.</p></div>
       <div><h3>3 · stand still</h3><p>Stop moving and the hippocampus <b>replays the path you just
         took</b>, backwards, in a fraction of a second.</p></div>
+      <div><h3>4 · open the tunnels</h3><p><kbd>K</kbd> connects all nine cages. Watch where they go —
+        and watch the place cells <b>remap</b> as one crosses.</p></div>
     </div>
     <div class="wfoot">
       <p class="note">The brain you rotate is real mouse anatomy from the Allen Institute atlas, and each

@@ -32,6 +32,9 @@ function angDiff(a, b) {
   return d;
 }
 
+/** the populations whose tuning is specific to one environment */
+const REMAPPED = ['place', 'ca3', 'dg', 'grid', 'border'];
+
 const BINS = 32;            // rate-map resolution
 const HD_BINS = 36;         // 10 deg per bin
 const TRAJ_DT = 0.05;       // trajectory sample period (s)
@@ -227,6 +230,13 @@ export class Brain {
     this.infanticide = 0;      // BSTrh drive to kill a pup
     this.paternal = 0;         // cMPOA inhibition of it, 0..1
     this.mature = true;
+
+    // ------------------------------------------------ which cage it is in
+    // A place cell does not have one map, it has one per environment, and the
+    // maps are independent of each other. See enterEnvironment().
+    this.envId = 0;
+    this.envs = {};
+    this.remapCount = 0;
     this.mode = null;          // which defence is running
     this.defenseGain = 1;      // 0 when the defence switch is off
     this.defenseT = 0;         // how much longer it has to run
@@ -1314,6 +1324,101 @@ export class Brain {
     return this;
   }
 
+  // ------------------------------------------------------- remapping
+  /**
+   * Move the animal into a different environment.
+   *
+   * Place cells do not carry one map around with them. Each environment gets
+   * its own, and the two are independent: a cell with a field by the door in
+   * one cage can be silent in the next, and the first map comes back intact
+   * when the animal returns. That is global remapping, and it is the reason
+   * the hippocampus can hold more than one place at a time.
+   *
+   * Not everything remaps. Grid cells shift and rotate as a module but keep
+   * their spacing, so the metric survives the move. Head-direction cells do
+   * not remap at all — the compass is global, and it is what lets the animal
+   * know which way it is facing in a cage it has never been in.
+   *   Muller & Kubie 1987; Leutgeb et al. 2005; Fyhn et al. 2007; Taube 1990
+   */
+  enterEnvironment(id) {
+    if (id === this.envId) return false;
+    this.envs[this.envId] = this.captureEnv();
+    this.envId = id;
+    const seen = this.envs[id];
+    if (seen) this.applyEnv(seen);        // the map it built here last time
+    else this.applyEnv(this.freshEnv());  // a new cage: a new map
+
+    // the accumulated rate maps belong to the cage it has left
+    this.occ.fill(0);
+    for (const p of this.pops) if (p.spikeMap) p.spikeMap.fill(0);
+    this.traj.length = 0;
+    this.ripple.active = false;
+    this.trace.fill(0);
+    this.valuePrev = this.value = 0;
+    this.remapCount++;
+    return true;
+  }
+
+  /** the current environment's map, as something that can be put back */
+  captureEnv() {
+    const cells = {};
+    for (const key of REMAPPED) cells[key] = this.byKey[key].cells.map((c) => ({ ...c }));
+    return { cells, w: Float32Array.from(this.w), modules: this.gridModules.map((m) => ({ ...m })) };
+  }
+
+  applyEnv(env) {
+    for (const key of REMAPPED) {
+      const p = this.byKey[key];
+      env.cells[key].forEach((c, i) => Object.assign(p.cells[i], c));
+    }
+    this.w.set(env.w);
+    this.gridModules = env.modules;
+  }
+
+  /** an independent map for a cage this animal has not been in before */
+  freshEnv() {
+    const rnd = this.rnd;
+    const A = this.arena;
+    const cells = {};
+    // place, CA3 and dentate: new field centres, new theta phases, and a
+    // fresh draw of which cells have a field here at all
+    for (const key of ['place', 'ca3', 'dg']) {
+      const p = this.byKey[key];
+      const spread = key === 'dg' ? 1.0 : (key === 'ca3' ? 1.05 : 1.06);
+      cells[key] = p.cells.map((c) => {
+        const silent = key === 'dg' && rnd() < 0.3;
+        return {
+          ...c,
+          cx: (rnd() - 0.5) * A * (silent ? 3.2 : spread),
+          cz: (rnd() - 0.5) * A * (silent ? 3.2 : spread),
+          ph: rnd() * TAU,
+        };
+      });
+    }
+    // grid cells: the module keeps its spacing and gains a new orientation and
+    // phase, which is what a grid module does in a new room
+    const modules = this.gridModules.map((m) => ({
+      lambda: m.lambda,
+      orient: m.orient + (rnd() - 0.5) * 0.9,
+    }));
+    cells.grid = this.byKey.grid.cells.map((c) => {
+      const m = modules[c.mod];
+      const k = (4 * Math.PI) / (Math.sqrt(3) * m.lambda);
+      const dirs = [0, 1, 2].map((j) => m.orient + (j * Math.PI) / 3);
+      return {
+        ...c,
+        kx: dirs.map((d) => k * Math.cos(d)),
+        kz: dirs.map((d) => k * Math.sin(d)),
+        ox: (rnd() - 0.5) * m.lambda,
+        oz: (rnd() - 0.5) * m.lambda,
+      };
+    });
+    // border cells keep their wall and their preferred distance: a wall is a
+    // wall in any cage, and boundary cells do not remap the way place cells do
+    cells.border = this.byKey.border.cells.map((c) => ({ ...c }));
+    return { cells, w: new Float32Array(this.w.length), modules };
+  }
+
   // ----------------------------------------------------------- injury & death
   /**
    * A bite lands. Fighting males aim for the rump and the base of the tail,
@@ -1940,6 +2045,9 @@ export class Brain {
     this.alive = true;
     this.causeOfDeath = null;
     this.health = 1;
+    this.envs = {};
+    this.envId = 0;
+    this.remapCount = 0;
     this.pain = this.aggression = this.maternalAgg = this.rivalry = 0;
     this.infanticide = this.paternal = 0;
     this.value = this.valuePrev = this.rpe = this.rpeSmooth = this.valueNorm = 0;

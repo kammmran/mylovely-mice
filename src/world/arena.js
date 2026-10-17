@@ -14,7 +14,12 @@ const WALL_H = 0.17;
 const TRAIL_MAX = 1400;
 
 // --------------------------------------------------------------- textures
+let _floorTex = null, _plumeTex = null;
 function floorTexture() {
+  if (_floorTex) return _floorTex;
+  return (_floorTex = buildFloorTexture());
+}
+function buildFloorTexture() {
   const S = 1024, c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
@@ -42,6 +47,10 @@ function floorTexture() {
 }
 
 function plumeTexture() {
+  if (_plumeTex) return _plumeTex;
+  return (_plumeTex = buildPlumeTexture());
+}
+function buildPlumeTexture() {
   const S = 256, c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
@@ -86,15 +95,47 @@ function makeCheese() {
 
 // --------------------------------------------------------------- the arena
 export class Arena {
-  constructor(scene) {
+  /**
+   * One cage. Several of these can share a scene — a grid of them, each with
+   * its own conditions — in which case only one owns the global light rig and
+   * the rest are lit by it plus a lamp of their own. Everything an arena draws
+   * goes in `this.group`, so `origin` offsets the whole cage and the animals
+   * inside it keep using arena-local coordinates.
+   */
+  constructor(scene, opts = {}) {
+    const {
+      lights = true,          // owns the scene-wide light rig?
+      lamp = false,           // a local lamp, for a cage that does not
+      origin = null,          // where this cage sits in the world
+      cheeses = 3,            // how much food it starts with
+      dish = true,            // is there a water dish at all?
+      label = null,
+    } = opts;
     this.scene = scene;
     this.size = SIZE;
     this.half = SIZE / 2;
     this.cheeses = [];
+    this.cheeseCount = cheeses;
+    this.hasDish = dish;
+    this.label = label;
+    this.origin = origin ? { x: origin.x, z: origin.z } : { x: 0, z: 0 };
     this.group = new THREE.Group();
+    if (origin) this.group.position.set(origin.x, 0, origin.z);
     scene.add(this.group);
 
     // ---- lighting ----
+    this.hemi = null; this.key = null; this.rim = null; this.lamp = null;
+    if (lamp) {
+      // one cage in a grid: lit locally, so its light level is visibly its own
+      this.lamp = new THREE.PointLight(0xfff0d8, 1.2, 2.2, 1.6);
+      this.lamp.position.set(0, 0.55, 0);
+      this.group.add(this.lamp);
+    }
+    if (!lights) {
+      this.lightLevel = 0.35;
+      this.buildPlate();
+      return;
+    }
     this.hemi = new THREE.HemisphereLight(0x9ab4d4, 0x141a22, 0.8);
     scene.add(this.hemi);
     const key = new THREE.DirectionalLight(0xfff0d8, 1.9);
@@ -117,6 +158,12 @@ export class Arena {
     this.rim = rim;
     this.lightLevel = 0.35;
 
+    this.buildPlate();
+  }
+
+  /** everything that is not the scene-wide light rig */
+  buildPlate() {
+    const scene = this.scene;
     // ---- plate ----
     const plate = new THREE.Mesh(
       new THREE.BoxGeometry(SIZE, 0.03, SIZE),
@@ -124,6 +171,7 @@ export class Arena {
     );
     plate.position.y = -0.015;
     plate.receiveShadow = true;
+    this.plate = plate;
     this.group.add(plate);
 
     // plate skirt / table
@@ -223,8 +271,11 @@ export class Arena {
     this.group.add(this.decoded);
 
     // ---- water dish -------------------------------------------------
-    this.dish = { ...DISH };
+    // A cage can be run without one, which is the point of the dry box in a
+    // grid: the animals in it have to go and find water somewhere else.
+    this.dish = this.hasDish === false ? null : { ...DISH };
     const dishGrp = new THREE.Group();
+    dishGrp.visible = this.hasDish !== false;
     dishGrp.position.set(DISH.x, 0, DISH.z);
     const bowl = new THREE.Mesh(
       new THREE.CylinderGeometry(DISH.r, DISH.r * 0.86, 0.016, 28, 1, true),
@@ -260,7 +311,7 @@ export class Arena {
     this.group.add(this.water);
 
     this.plumeTex = plumeTexture();
-    for (let i = 0; i < 3; i++) this.addCheese(this.randomSpot(MOUSE_START));
+    for (let i = 0; i < (this.cheeseCount ?? 3); i++) this.addCheese(this.randomSpot(MOUSE_START));
   }
 
   // ------------------------------------------------------------- cheese
@@ -437,12 +488,22 @@ export class Arena {
   setLight(v) {
     this.lightLevel = Math.max(0, Math.min(1, v));
     const k = this.lightLevel;
+    if (this.lamp) this.lamp.intensity = 0.25 + 2.6 * k;
+    // a cage without the global rig still has to look lit or unlit
+    if (this.plate && this.plate.material) {
+      this.plate.material.emissive.setRGB(0.05 * k, 0.05 * k, 0.045 * k);
+      this.plate.material.emissiveIntensity = 0.4 + 1.6 * k;
+    }
+    if (!this.hemi) return;
     this.hemi.intensity = 0.35 + 1.5 * k;
     this.key.intensity = 0.8 + 3.1 * k;
     this.rim.intensity = 0.55 - 0.35 * k;
     this.scene.background.setRGB(0.027 + 0.1 * k, 0.038 + 0.12 * k, 0.055 + 0.14 * k);
     if (this.scene.fog) this.scene.fog.color.copy(this.scene.background);
   }
+
+  /** world position of a point given in this cage's local coordinates */
+  toWorld(x, z) { return { x: x + this.origin.x, z: z + this.origin.z }; }
 
   /** 0 = dry, 1 = deep enough to swim in */
   setWater(v) {
@@ -455,6 +516,7 @@ export class Arena {
   /** is the nose at drinkable water? */
   atWater(x, z) {
     if (this.waterLevel > 0.04) return true;
+    if (!this.dish) return false;
     return Math.hypot(x - this.dish.x, z - this.dish.z) < this.dish.r;
   }
 
@@ -469,7 +531,7 @@ export class Arena {
       this.group.remove(c.mesh, c.plume);
     }
     this.cheeses.length = 0;
-    for (let i = 0; i < 3; i++) this.addCheese(this.randomSpot(MOUSE_START));
+    for (let i = 0; i < (this.cheeseCount ?? 3); i++) this.addCheese(this.randomSpot(MOUSE_START));
   }
 }
 

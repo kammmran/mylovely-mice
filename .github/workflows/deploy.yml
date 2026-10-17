@@ -29,13 +29,18 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Jekyll would otherwise swallow any path beginning with an underscore
       - name: disable jekyll
         run: touch .nojekyll
 
+      # enablement: true turns Pages on through the API the first time this
+      # runs. Without it the job fails with "Get Pages site failed ... Not
+      # Found" until somebody sets Settings -> Pages -> Source by hand.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
