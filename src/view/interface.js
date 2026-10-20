@@ -43,7 +43,7 @@ export function mountInterface({ getState, nextMouse, togglePanel, restart, clea
   }
   $('b-mobile-menu').onclick = () => setMenu(!document.body.classList.contains('sidebar-open'));
   $('sidebar-backdrop').onclick = () => setMenu(false);
-  const panelLaunchers = new Set(['b-boxes', 'b-colony', 'b-signals', 'b-optics', 'b-mortality', 'b-report']);
+  const panelLaunchers = new Set(['b-boxes', 'b-colony', 'b-signals', 'b-optics', 'b-mortality', 'b-report', 'b-panels']);
   $('brain-pane').addEventListener('click', (event) => {
     if (mobile.matches && panelLaunchers.has(event.target.closest('button')?.id)) setMenu(false);
   });

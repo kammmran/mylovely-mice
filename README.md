@@ -35,7 +35,10 @@ region details and learned maps. **Tools** holds experiments, reports and
 Floating panels, status badges, the scale bar and bottom charts start hidden.
 **Clean view** restores this layout; **Help & shortcuts** explains how to explore.
 The nine cages panel opens in the platform’s top-left corner, and floating panels
-have close and collapse controls. Restarting a session asks for confirmation.
+have close and collapse controls. Drag a popup’s header to move it; **Alt + arrow
+keys** move a focused header with the keyboard. **Customize panels** also opens
+as a floating window over the platform. **Clean view** restores default popup
+positions. Restarting a session asks for confirmation.
 The browser remembers your panel choices.
 
 ### On GitHub Pages

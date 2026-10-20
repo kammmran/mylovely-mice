@@ -135,10 +135,25 @@ for (const [tab, button, card] of [['Explore', '#b-boxes', '#boxes'], ['Tools', 
   await page.getByRole('tab', { name: tab, exact: true }).click();
   await page.click(button);
   if (!await visible(card)) fail.push(`${card} did not open on the first click`);
+  if (card === '#boxes') {
+    const before = await page.locator(card).boundingBox();
+    const title = await page.locator(`${card} .panel-fold`).boundingBox();
+    await page.mouse.move(title.x + 40, title.y + title.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(title.x + 200, title.y + title.height / 2 + 100, { steps: 3 });
+    await page.mouse.up();
+    const after = await page.locator(card).boundingBox();
+    if (after.x <= before.x + 100 || after.y <= before.y + 60 || !await visible(`${card} .body`)) fail.push('Dragging a popup did not move it independently, or collapsed its body');
+  }
   await page.locator(`${card} .panel-close`).click();
   if (await visible(card)) fail.push(`${card} did not close`);
 }
+const sidebarHeight = await page.locator('.sidebar-content').evaluate((node) => node.scrollHeight);
 await page.click('#b-panels');
+if (await page.locator('.sidebar-content').evaluate((node) => node.scrollHeight) !== sidebarHeight) fail.push('Opening panel settings changed the sidebar layout');
+const settings = await page.locator('#panel-menu').boundingBox();
+const platform = await page.locator('#world-pane').boundingBox();
+if (!settings || settings.x < platform.x || settings.x + settings.width > platform.x + platform.width) fail.push('Panel settings did not float over the platform');
 await page.getByRole('menuitemcheckbox', { name: /what just happened/ }).click();
 if (!await visible('#feed')) fail.push('event feed did not open from the Panels menu');
 await page.reload({ waitUntil: 'load' });
@@ -159,12 +174,13 @@ if (!mobileWorld || mobileWorld.width < 300 || await page.locator('#b-mobile-men
 }
 await page.click('#b-mobile-menu');
 await page.getByRole('tab', { name: 'Tools', exact: true }).click();
-const mobileMenu = await page.locator('#brain-pane').boundingBox();
 await page.click('#b-panels');
 const panelMenu = await page.locator('#panel-menu').boundingBox();
-if (!panelMenu || !mobileMenu || panelMenu.x < mobileMenu.x || panelMenu.x + panelMenu.width > mobileMenu.x + mobileMenu.width) {
-  fail.push('narrow screen clips the panel controls');
+if (!panelMenu || panelMenu.x < 12 || panelMenu.x + panelMenu.width > mobileWorld.width - 11 || await page.locator('#b-mobile-menu').getAttribute('aria-expanded') !== 'false') {
+  fail.push('Mobile panel settings did not float inside the platform with the drawer closed');
 }
+await page.click('#panel-menu-close');
+await page.click('#b-mobile-menu');
 await page.click('#b-clean');
 const mobileMouse = await page.locator('#ui-mouse').boundingBox();
 const mobileHeader = await page.locator('#topbar').boundingBox();

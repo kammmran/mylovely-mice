@@ -25,6 +25,7 @@ import { Raster, Trace, drawRateMap, drawPolar } from './view/plots.js';
 import { mountSignals } from './view/signalspanel.js';
 import { SLOT } from './view/palette.js';
 import { mountInterface } from './view/interface.js';
+import { mountFloatingPanels } from './view/floatingpanels.js';
 import { ROLES, ORDER, GROUPS } from './neuro/regions.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1149,7 +1150,8 @@ function applyPanels() {
 }
 
 function buildPanelMenu() {
-  const m = $('panel-menu');
+  const m = $('panel-options');
+  const focused = m.contains(document.activeElement) ? document.activeElement.dataset.panelKey : null;
   m.textContent = '';
   let group = null;
   for (const p of PANELS) {
@@ -1161,6 +1163,7 @@ function buildPanelMenu() {
     }
     const row = document.createElement('button');
     row.type = 'button';
+    row.dataset.panelKey = p.key;
     row.setAttribute('role', 'menuitemcheckbox');
     row.setAttribute('aria-checked', String(shown(p.key)));
     row.className = 'mrow' + (shown(p.key) ? ' on' : '');
@@ -1178,18 +1181,30 @@ function buildPanelMenu() {
   };
   foot.appendChild(btn('show all', () => { for (const p of PANELS) panelOn[p.key] = true; }));
   foot.appendChild(btn('clean view', restoreCleanView));
-  m.appendChild(foot);
+  $('panel-menu-footer').replaceChildren(foot);
+  if (focused) m.querySelector(`[data-panel-key="${focused}"]`)?.focus({ preventScroll: true });
 }
 
 function togglePanelMenu(force) {
   const m = $('panel-menu');
+  const wasOpen = !m.hidden;
   const open = force !== undefined ? force : m.hidden;
   m.hidden = !open;
   $('b-panels').classList.toggle('on', open);
   $('b-panels').setAttribute('aria-expanded', String(open));
-  if (open) buildPanelMenu();
+  if (open) {
+    m.removeAttribute('data-collapsed');
+    m.querySelector('.panel-fold')?.setAttribute('aria-expanded', 'true');
+    buildPanelMenu();
+    floating.open(m, $('b-panels'));
+    requestAnimationFrame(() => m.querySelector('[role="menuitemcheckbox"]')?.focus({ preventScroll: true }));
+  } else if (wasOpen && m.contains(document.activeElement)) {
+    ($('brain-pane').inert ? $('b-mobile-menu') : $('b-panels')).focus({ preventScroll: true });
+  }
 }
 function restoreCleanView() {
+  togglePanelMenu(false);
+  floating.reset();
   Object.assign(panelOn, defaultPanelOn);
   signals?.open(false);
   optics.open?.(false);
@@ -1198,8 +1213,11 @@ function restoreCleanView() {
   $('stats-card').open = false;
   applyPanels();
 }
-$('b-panels').onclick = (e) => { e.stopPropagation(); togglePanelMenu(); };
-document.addEventListener('click', () => togglePanelMenu(false));
+$('b-panels').onclick = () => togglePanelMenu();
+$('panel-menu-close').onclick = () => togglePanelMenu(false);
+document.addEventListener('click', (e) => {
+  if (!$('panel-menu').contains(e.target) && !$('b-panels').contains(e.target)) togglePanelMenu(false);
+});
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') togglePanelMenu(false);
 });
@@ -2365,6 +2383,7 @@ const ui = mountInterface({
   cleanView: restoreCleanView,
   resize,
 });
+const floating = mountFloatingPanels($('world-pane'));
 
 setLight(0.35);
 setWater(0);

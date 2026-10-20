@@ -457,6 +457,11 @@
           <kbd>P</kbd> pause &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>?</kbd> help
         </div>
       </div>
+      <div class="menu float" id="panel-menu" role="dialog" aria-label="Customize panels" hidden>
+        <h5 data-fold><span>Customize panels</span><span class="tw">▾</span><button class="panel-close" id="panel-menu-close" aria-label="Close panel settings">×</button></h5>
+        <div class="body" id="panel-options" role="menu" aria-label="Visible panels"></div>
+        <div id="panel-menu-footer"></div>
+      </div>
     </section>
 
     <aside id="brain-pane" aria-label="Simulation controls">
@@ -581,7 +586,7 @@
           <section class="control-section"><h3>View overlays</h3>
             <div class="button-pair"><button class="btn on" id="b-trail" aria-pressed="true" title="Show the mouse’s path (T)">Path trail</button><button class="btn" id="b-value" aria-pressed="false" title="Show where the mouse has learned to find rewards (V)">Reward map</button></div>
           </section>
-          <div class="menuwrap"><button class="btn" id="b-panels" aria-expanded="false" aria-controls="panel-menu">Customize panels ▾</button><div class="menu" id="panel-menu" role="menu" aria-label="Visible panels" hidden></div></div>
+          <div class="menuwrap"><button class="btn" id="b-panels" aria-expanded="false" aria-controls="panel-menu" aria-haspopup="dialog">Customize panels ▾</button></div>
           <div class="restart-section"><button class="btn ghost danger" id="b-reset">Restart session</button><p class="hint">Start fresh with all nine cages. Your current session will be cleared.</p></div>
         </section>
       </div>
