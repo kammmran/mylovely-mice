@@ -2167,21 +2167,22 @@ function frame(now) {
     while (simAcc >= SUB_STEP && n < cap) { stepWorld(SUB_STEP); simAcc -= SUB_STEP; n++; }
     if (n >= cap) simAcc = 0;              // gave up on the backlog
     simStepsLast = n;
+  }
 
-    // one draw call per cage for every animal in it without a rig
-    for (const bx of grid.boxes) {
-      proxyScratch.length = 0;
-      for (const ag of bx.agents) {
-        if (ag.hasRig) continue;
-        // let the instanced bodies show the defensive state the rig would
-        ag.mouse.freeze = ag.brain.freeze || 0;
-        ag.mouse.fear = ag.brain.fear || 0;
-        ag.mouse.risk = ag.brain.risk || 0; ag.mouse.startle = ag.brain.startle || 0;
-        ag.mouse.dead = !ag.brain.alive;
-        proxyScratch.push(ag.mouse);
-      }
-      bx.herd.sync(proxyScratch);
+  // Selection and camera changes can swap rigs even while paused. Keep the
+  // rendered instances and their picking order synchronized in either state.
+  for (const bx of grid.boxes) {
+    proxyScratch.length = 0;
+    for (const ag of bx.agents) {
+      if (ag.hasRig) continue;
+      // let the instanced bodies show the defensive state the rig would
+      ag.mouse.freeze = ag.brain.freeze || 0;
+      ag.mouse.fear = ag.brain.fear || 0;
+      ag.mouse.risk = ag.brain.risk || 0; ag.mouse.startle = ag.brain.startle || 0;
+      ag.mouse.dead = !ag.brain.alive;
+      proxyScratch.push(ag.mouse);
     }
+    bx.herd.sync(proxyScratch);
   }
 
   // ---- camera follows whichever mouse you are driving ----

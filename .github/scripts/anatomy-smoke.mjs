@@ -57,7 +57,22 @@ export async function checkAnatomy(page) {
   check(await page.evaluate(() => window.sim.agents.find((a) => a.brain === window.sim.brain).moveTarget === null), 'Clicking a mouse also sent it to a floor target');
   check(await page.locator('#anatomy').count() === 1, 'Mouse clicks created duplicate anatomy windows');
   await page.locator('#anatomy .panel-close').click();
+  await page.selectOption('#b-cam', 'all nine');
+  await page.waitForTimeout(500);
+  const proxy = await page.evaluate(() => {
+    const s = window.sim;
+    const ag = s.agents.find((a) => !a.hasRig && !a.dead && a.box.agents.every((b) => b === a
+      || Math.hypot(a.mouse.x - b.mouse.x, a.mouse.z - b.mouse.z) > .14));
+    if (!ag) throw new Error('No isolated proxy available for anatomy picking');
+    const rect = document.getElementById('world').getBoundingClientRect();
+    const p = new s.THREE.Vector3(ag.box.origin.x + ag.mouse.x, .02, ag.box.origin.z + ag.mouse.z).project(s.camera);
+    return { name: ag.name, x: rect.left + (p.x * .5 + .5) * rect.width, y: rect.top + (-p.y * .5 + .5) * rect.height };
+  });
+  await page.mouse.click(proxy.x, proxy.y);
+  await page.waitForFunction((name) => window.sim.anatomy.isOpen()
+    && document.getElementById('anatomy').dataset.mouse === name, proxy.name, { timeout: 30000 });
+  await page.locator('#anatomy .panel-close').click();
   await page.click('#b-pause');
   await page.evaluate(() => { for (const ag of window.sim.agents) ag.brain.drives.fear = true; });
-  console.log('Live skeleton joints, pause and view freeze, anatomy layers, selection and mouse-click popup passed');
+  console.log('Live skeleton joints, pause and view freeze, anatomy layers, and detailed/proxy mouse-click popups passed');
 }
