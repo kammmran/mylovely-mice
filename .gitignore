@@ -9,6 +9,7 @@
 
 # node, if a tool is ever added — the simulator itself has no dependencies
 node_modules/
+dist/
 npm-debug.log*
 
 # local scratch

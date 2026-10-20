@@ -24,27 +24,47 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-Three.js is loaded from a CDN, so the first load needs a network connection.
+Three.js and its controls are included in `vendor/`. All runtime files are
+served by the site itself, with no CDN dependency and no backend to keep running.
+
+The default view is the platform and right sidebar. Controls live in the sidebar,
+with **Live stats** collapsed below them. Floating panels, status badges, the
+scale bar and bottom charts start hidden; the introduction opens with **?**.
+Use **panels → clean view** to restore this layout, or enable individual panels.
+The browser remembers your choices.
 
 ### On GitHub Pages
 
-There is nothing to build, so the repository *is* the site.
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) publishes it on
-every push to `main`, at `https://<user>.github.io/mylovely-mice/`.
+Live site: **https://kammmran.github.io/mylovely-mice/**
 
-The workflow turns Pages on itself the first time it runs (`enablement: true`).
-If your organisation blocks that, the job fails with *"Get Pages site failed …
-Not Found"*, and the fix is to set it by hand once: **Settings → Pages → Build
-and deployment → Source: GitHub Actions**.
+GitHub Pages hosts the site continuously, including when your computer is off.
+Each visitor runs their own simulation in their browser; it does not keep
+simulating after that browser tab closes.
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) runs the checks and
+browser smoke test before publishing every push to `main`. You can also run it
+from **Actions → deploy to github pages → Run workflow**. A failed check leaves
+the previous successful deployment live.
+
+Pages is already enabled for this repository. For a new fork, select
+**Settings → Pages → Build and deployment → Source: GitHub Actions** once.
+No hosting server, secrets, or scheduled keep-alive jobs are needed.
+
+[`.github/scripts/package-site.mjs`](.github/scripts/package-site.mjs) stages
+`index.html`, `src/`, `data/`, `vendor/` and `.nojekyll` in `dist/`. Only those
+public runtime files are uploaded.
 
 Every path in the page is relative, so it works from the `/mylovely-mice/`
 subpath without configuration.
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and
-pull request. With no bundler and no test runner, it checks the things that
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) is called by deployment on
+every push to `main`, and also runs on pull requests. It checks the things that
 would otherwise only show up as a blank page: that every module parses, that
 every relative import points at a file that exists, that the data files parse,
-and that `index.html` only references files that are in the repository.
+and that `index.html` and its import map reference local files in the repository.
+The browser test serves the staged site at `/mylovely-mice/`, blocks external
+requests, verifies that the simulation runs, and checks the clean default,
+panel toggles, saved preferences and narrow-screen layout.
 
 ## Controls
 

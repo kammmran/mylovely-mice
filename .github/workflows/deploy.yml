@@ -1,9 +1,7 @@
 # Publish the simulator to GitHub Pages.
 #
-# There is nothing to build: the page is plain ES modules and loads three.js
-# from a CDN, so the whole repository is the artifact. The only thing this has
-# to get right is that the data files ship with it — the Allen CCF meshes and
-# the connectivity matrix are fetched at runtime by relative path.
+# The browser checks exercise the staged site at its /mylovely-mice/ subpath.
+# Publish that same set of runtime files only after all checks pass.
 name: deploy to github pages
 
 on:
@@ -13,8 +11,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # one deployment at a time; a newer push supersedes a running one rather than
 # queueing behind it
@@ -23,7 +19,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: checks
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -31,20 +35,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Jekyll would otherwise swallow any path beginning with an underscore
-      - name: disable jekyll
-        run: touch .nojekyll
-
-      # enablement: true turns Pages on through the API the first time this
-      # runs. Without it the job fails with "Get Pages site failed ... Not
-      # Found" until somebody sets Settings -> Pages -> Source by hand.
-      - uses: actions/configure-pages@v5
+      - uses: actions/setup-node@v4
         with:
-          enablement: true
+          node-version: '22'
+
+      - name: stage public site
+        run: node .github/scripts/package-site.mjs
+
+      - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: dist
 
       - id: deployment
         uses: actions/deploy-pages@v4

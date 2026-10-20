@@ -7,10 +7,12 @@
 name: checks
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -57,13 +59,18 @@ jobs:
           npm install --no-save playwright@1.56.0
           npx playwright install --with-deps chromium
 
-      - name: serve the repository
+      - name: stage public site
+        run: node .github/scripts/package-site.mjs
+
+      - name: serve the GitHub Pages subpath
         run: |
-          node .github/scripts/serve.mjs &
+          SITE_ROOT=dist BASE_PATH=/mylovely-mice node .github/scripts/serve.mjs &
           for i in $(seq 1 30); do
-            curl -sf http://localhost:8777/index.html >/dev/null && break
+            curl -sf http://localhost:8777/mylovely-mice/index.html >/dev/null && break
             sleep 1
           done
 
       - name: load the page and fail on anything it throws
+        env:
+          URL: http://localhost:8777/mylovely-mice
         run: node .github/scripts/smoke.mjs

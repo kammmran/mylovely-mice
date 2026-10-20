@@ -674,12 +674,10 @@ if (grid.viewBtn) {
 
 /** the nine-cages card */
 function toggleBoxes(force) {
-  const on = force === undefined ? !grid.isOpen() : !!force;
-  if (on && panelOn.boxes === false) { panelOn.boxes = true; applyPanels(); }
+  const on = force === undefined ? !shown('boxes') : !!force;
+  panelOn.boxes = on;
   if (on) toggleMortality(false);          // they share the same slot
-  grid.openPanel(on);
-  const btn = $('b-boxes');
-  if (btn) btn.classList.toggle('on', on);
+  applyPanels();
 }
 
 function toggleReport(force) {
@@ -691,14 +689,10 @@ function toggleReport(force) {
 
 /** the fighting & mortality card: its own markup, like the optogenetics rig */
 function toggleMortality(force) {
-  const on = force === undefined ? !mortality.isOpen() : !!force;
-  // the panels menu can also have it hidden; opening it from the toolbar means
-  // the user wants to see it, so clear that too
-  if (on && panelOn.mortality === false) { panelOn.mortality = true; applyPanels(); }
-  if (on && typeof grid !== 'undefined') grid.openPanel(false);
-  mortality.open(on);
-  const btn = $('b-mortality');
-  if (btn) btn.classList.toggle('on', on);
+  const on = force === undefined ? !shown('mortality') : !!force;
+  panelOn.mortality = on;
+  if (on) panelOn.boxes = false;
+  applyPanels();
 }
 
 /** is the optogenetics card currently showing? (it owns its own markup) */
@@ -1096,7 +1090,7 @@ for (const k of Object.keys(DRIVE_BTN)) $(DRIVE_BTN[k]).onclick = () => toggleDr
 // ----------------------------------------------------------------- panels
 /** Every panel can be shown or hidden, and the layout closes up around it. */
 const PANELS = [
-  { key: 'sidebar', label: 'whole side panel', group: 'layout' },
+  { key: 'sidebar', label: 'brain panels', group: 'layout' },
   { key: 'brain', label: 'the brain, live', group: 'side panel' },
   { key: 'busiest', label: 'busiest right now', group: 'side panel' },
   { key: 'region', label: 'about this region', group: 'side panel' },
@@ -1111,10 +1105,21 @@ const PANELS = [
   { key: 'mortality', label: 'fighting & mortality', group: 'over the arena' },
   { key: 'boxes', label: 'nine cages', group: 'over the arena' },
   { key: 'keys', label: 'keys', group: 'over the arena' },
+  { key: 'hud', label: 'mouse status & position', group: 'over the arena' },
+  { key: 'scale', label: 'scale bar', group: 'over the arena' },
 ];
-const panelOn = {};
-for (const p of PANELS) panelOn[p.key] = true;
-try { Object.assign(panelOn, JSON.parse(localStorage.getItem('mlm-panels') || '{}')); } catch { /* private mode */ }
+// A new layout preference leaves old all-panels settings behind. Subsequent
+// visits remember choices made in this layout; "clean view" restores it.
+const PANEL_STORAGE = 'mlm-panels-v2';
+const defaultPanelOn = Object.fromEntries(PANELS.map((p) =>
+  [p.key, p.group === 'layout' || p.group === 'side panel']));
+const panelOn = { ...defaultPanelOn };
+try {
+  const saved = JSON.parse(localStorage.getItem(PANEL_STORAGE) || '{}');
+  for (const p of PANELS) {
+    if (typeof saved?.[p.key] === 'boolean') panelOn[p.key] = saved[p.key];
+  }
+} catch { /* private mode */ }
 const shown = (k) => panelOn[k] !== false;
 
 function applyPanels() {
@@ -1123,7 +1128,10 @@ function applyPanels() {
       e.classList.toggle('panel-off', !shown(p.key));
     }
   }
-  document.body.classList.toggle('no-sidebar', !shown('sidebar'));
+  grid.openPanel(shown('boxes'));
+  mortality.open(shown('mortality'));
+  $('b-boxes').classList.toggle('on', shown('boxes'));
+  $('b-mortality').classList.toggle('on', shown('mortality'));
   // the bottom strip closes up as its cells go away
   const anyTrace = shown('waves') || shown('reward');
   const tr = $('trace-right');
@@ -1133,8 +1141,9 @@ function applyPanels() {
     ft.classList.toggle('panel-off', !shown('spikes') && !anyTrace);
     ft.classList.toggle('wide-traces', !shown('spikes') && anyTrace);
   }
+  document.body.classList.remove('starting');
   resize();
-  try { localStorage.setItem('mlm-panels', JSON.stringify(panelOn)); } catch { /* private mode */ }
+  try { localStorage.setItem(PANEL_STORAGE, JSON.stringify(panelOn)); } catch { /* private mode */ }
 }
 
 function buildPanelMenu() {
@@ -1148,7 +1157,10 @@ function buildPanelMenu() {
       h.textContent = group;
       m.appendChild(h);
     }
-    const row = document.createElement('div');
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.setAttribute('role', 'menuitemcheckbox');
+    row.setAttribute('aria-checked', String(shown(p.key)));
     row.className = 'mrow' + (shown(p.key) ? ' on' : '');
     row.innerHTML = `<span class="box"><span>✓</span></span>${p.label}`;
     row.onclick = (e) => { e.stopPropagation(); panelOn[p.key] = !shown(p.key); applyPanels(); buildPanelMenu(); };
@@ -1163,7 +1175,14 @@ function buildPanelMenu() {
     return b;
   };
   foot.appendChild(btn('show all', () => { for (const p of PANELS) panelOn[p.key] = true; }));
-  foot.appendChild(btn('arena only', () => { for (const p of PANELS) panelOn[p.key] = false; }));
+  foot.appendChild(btn('clean view', () => {
+    Object.assign(panelOn, defaultPanelOn);
+    signals?.open(false);
+    optics.open?.(false);
+    toggleReport(false);
+    syncSignalsBtn();
+    $('stats-card').open = false;
+  }));
   m.appendChild(foot);
 }
 
@@ -1172,10 +1191,14 @@ function togglePanelMenu(force) {
   const open = force !== undefined ? force : m.hidden;
   m.hidden = !open;
   $('b-panels').classList.toggle('on', open);
+  $('b-panels').setAttribute('aria-expanded', String(open));
   if (open) buildPanelMenu();
 }
 $('b-panels').onclick = (e) => { e.stopPropagation(); togglePanelMenu(); };
 document.addEventListener('click', () => togglePanelMenu(false));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') togglePanelMenu(false);
+});
 
 // clicking a card's title rolls it up without removing it
 for (const h of document.querySelectorAll('.pcard > h4')) {
@@ -1231,6 +1254,12 @@ function toggleAuto() {
     : `you have the keys — <b>${ag.name}</b> is yours to drive`);
 }
 function toggleHelp() {
+  if (!shown('keys')) {
+    panelOn.keys = true;
+    $('keys').removeAttribute('data-collapsed');
+    applyPanels();
+    return;
+  }
   $('keys').toggleAttribute('data-collapsed');
 }
 function showWelcome(on) {
@@ -1293,7 +1322,7 @@ if ($('b-mortality')) $('b-mortality').onclick = () => toggleMortality();
 if ($('b-boxes')) $('b-boxes').onclick = () => toggleBoxes();
 if ($('b-speed')) $('b-speed').onclick = () => cycleSpeed();
 if ($('b-report')) $('b-report').onclick = () => toggleReport();
-$('b-cam').onclick = cycleCamera;
+$('b-cam').onclick = () => cycleCamera();
 $('b-pause').onclick = togglePause;
 $('b-reset').onclick = doReset;
 $('b-value').onclick = toggleValue;
@@ -2298,14 +2327,8 @@ document.addEventListener('click', (e) => {
   if (h) h.parentElement.toggleAttribute('data-collapsed');
 });
 
-// first visit gets the explainer; after that it is behind the "?" button
-let seen = false;
-try { seen = localStorage.getItem('mlm-seen') === '1'; } catch { seen = false; }
-if (!seen) showWelcome(true);
-$('welcome-start').onclick = () => {
-  showWelcome(false);
-  try { localStorage.setItem('mlm-seen', '1'); } catch { /* private mode */ }
-};
+// Start directly in the platform. The explainer remains behind the "?" button.
+$('welcome-start').onclick = () => showWelcome(false);
 $('welcome').onclick = (e) => { if (e.target === $('welcome')) showWelcome(false); };
 
 applyPanels();
