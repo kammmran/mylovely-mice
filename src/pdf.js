@@ -5,8 +5,7 @@
  * No dependencies, because the rest of this project has none either: a PDF is
  * a text format, and a document that only needs the fourteen standard fonts
  * does not need any of a PDF library. It writes A4 pages of Helvetica with
- * headings, key/value rows, tables and rules, keeps a cursor, and breaks the
- * page when it runs out of room.
+ * headings, tables and embedded JPEG figures, and breaks pages as needed.
  *
  * Two constraints the format imposes, both handled here:
  *   - the cross-reference table at the end is a list of byte offsets into the
@@ -29,8 +28,19 @@ const WIDTHS = {
   '`': 0.333, '{': 0.334, '|': 0.26, '}': 0.334, '~': 0.584,
   f: 0.278, i: 0.222, j: 0.222, l: 0.222, r: 0.333, t: 0.278,
   m: 0.833, w: 0.722, I: 0.278, J: 0.5, M: 0.833, W: 0.944,
+  A: .667, B: .667, C: .722, D: .722, E: .667, F: .611, G: .778, H: .722,
+  K: .667, L: .556, N: .722, O: .778, P: .667, Q: .778, R: .722, S: .667,
+  T: .611, U: .722, V: .667, X: .667, Y: .667, Z: .611,
+  a: .556, b: .556, c: .5, d: .556, e: .556, g: .556, h: .556,
+  k: .5, n: .556, o: .556, p: .556, q: .556, s: .5, u: .556,
+  v: .5, x: .5, y: .5, z: .5,
 };
 for (const d of '0123456789') WIDTHS[d] = 0.556;
+const BOLD_WIDTHS = { ...WIDTHS, A: .722, B: .722, J: .556, K: .722, L: .611,
+  W: 1, X: .722, Y: .722, b: .611, c: .556, d: .611, f: .333, g: .611,
+  h: .611, i: .278, j: .278, k: .556, l: .278, m: .889, n: .611,
+  o: .611, p: .611, q: .611, r: .389, s: .556, t: .333, u: .611,
+  v: .556, w: .778, x: .556, y: .556 };
 
 /** the file is ASCII, so anything else has to become something that is */
 const TRANSLIT = {
@@ -60,6 +70,7 @@ export class Pdf {
     this.ops = null;
     this.y = 0;
     this.footer = null;
+    this.images = [];
     this.newPage();
   }
 
@@ -67,10 +78,25 @@ export class Pdf {
   get left() { return this.margin; }
   get right() { return this.size[0] - this.margin; }
 
-  textWidth(s, size) {
+  textWidth(s, size, font = 'F1') {
+    if (font === 'F3') return ascii(s).length * size * 0.6;
     let w = 0;
-    for (const ch of ascii(s)) w += (WIDTHS[ch] !== undefined ? WIDTHS[ch] : W_DEFAULT) * size;
+    const widths = font === 'F2' ? BOLD_WIDTHS : WIDTHS;
+    for (const ch of ascii(s)) w += (widths[ch] !== undefined ? widths[ch] : W_DEFAULT) * size;
     return w;
+  }
+
+  wrap(s, width, size, font = 'F1') {
+    const lines = []; let line = '';
+    for (const word of ascii(s).split(/\s+/).filter(Boolean)) {
+      if (line && this.textWidth(`${line} ${word}`, size, font) > width) { lines.push(line); line = ''; }
+      for (const char of (line ? ` ${word}` : word)) {
+        if (this.textWidth(line + char, size, font) > width && line) { lines.push(line); line = ''; }
+        line += char;
+      }
+    }
+    if (line) lines.push(line);
+    return lines;
   }
 
   newPage() {
@@ -107,28 +133,20 @@ export class Pdf {
 
   /** wrapped body text */
   text(s, { size = 9.5, font = 'F1', colour = [0.2, 0.22, 0.26], indent = 0, gap = 2.4 } = {}) {
-    const max = this.width - indent;
-    const words = ascii(s).split(/\s+/).filter(Boolean);
-    let cur = '';
-    for (const w of words) {
-      const probe = cur ? `${cur} ${w}` : w;
-      if (this.textWidth(probe, size) > max && cur) {
-        this.line(cur, { size, font, colour, x: this.left + indent, gap });
-        cur = w;
-      } else cur = probe;
+    for (const line of this.wrap(s, this.width - indent, size, font)) {
+      this.line(line, { size, font, colour, x: this.left + indent, gap });
     }
-    if (cur) this.line(cur, { size, font, colour, x: this.left + indent, gap });
     return this;
   }
 
   h1(s) {
     this.room(26);
     this.y -= 6;
-    return this.line(s, { size: 17, font: 'F2', colour: [0.08, 0.1, 0.13], gap: 6 });
+    return this.text(s, { size: 17, font: 'F2', colour: [0.08, 0.1, 0.13], gap: 6 });
   }
 
   h2(s) {
-    this.room(24);
+    this.room(60);
     this.y -= 9;
     this.line(s, { size: 12, font: 'F2', colour: [0.08, 0.1, 0.13], gap: 4 });
     return this.rule();
@@ -161,11 +179,15 @@ export class Pdf {
 
   /** a label and a value on one line, label grey, value black */
   kv(label, value, { size = 9, labelW = 112, x = null } = {}) {
-    this.room(size + 3);
-    this.y -= size;
     const px = x == null ? this.left : x;
+    const lines = this.wrap(value, this.right - px - labelW, size, 'F3');
+    this.room(Math.max(1, lines.length) * (size + 3));
+    this.y -= size;
     this.ops.push(`BT /F1 ${size} Tf 0.45 0.47 0.5 rg 1 0 0 1 ${px.toFixed(1)} ${this.y.toFixed(1)} Tm (${esc(label)}) Tj ET`);
-    this.ops.push(`BT /F3 ${size} Tf 0.1 0.12 0.15 rg 1 0 0 1 ${(px + labelW).toFixed(1)} ${this.y.toFixed(1)} Tm (${esc(value)}) Tj ET`);
+    lines.forEach((line, index) => {
+      this.ops.push(`BT /F3 ${size} Tf 0.1 0.12 0.15 rg 1 0 0 1 ${(px + labelW).toFixed(1)} ${(this.y - index * (size + 3)).toFixed(1)} Tm (${esc(line)}) Tj ET`);
+    });
+    this.y -= Math.max(0, lines.length - 1) * (size + 3);
     this.y -= 3;
     return this;
   }
@@ -190,27 +212,26 @@ export class Pdf {
   /** a table with a header row; widths are fractions of the text column */
   table(headers, rows, widths, { size = 8.5 } = {}) {
     const total = widths.reduce((a, b) => a + b, 0);
+    const columns = widths.map((width) => width / total * this.width);
     const xs = [];
     let acc = this.left;
     for (const w of widths) { xs.push(acc); acc += (w / total) * this.width; }
-    const header = () => {
-      this.room(18);
-      this.y -= 10;
-      headers.forEach((h, i) => {
-        this.ops.push(`BT /F2 ${size} Tf 0.4 0.42 0.46 rg 1 0 0 1 ${xs[i].toFixed(1)} ${this.y.toFixed(1)} Tm (${esc(h)}) Tj ET`);
-      });
-      this.y -= 2;
-      this.rule([0.7, 0.72, 0.76]);
+    const wrap = (value, width) => this.wrap(value, width - 8, size);
+    const row = (cells, bold = false) => {
+      const lines = cells.map((cell, index) => this.wrap(cell, columns[index] - 8, size, bold ? 'F2' : 'F1'));
+      const height = Math.max(...lines.map((cell) => cell.length)) * (size + 3) + 8;
+      this.room(height);
+      if (bold) this.ops.push(`0.92 0.95 0.96 rg ${this.left} ${(this.y - height).toFixed(1)} ${this.width} ${height.toFixed(1)} re f`);
+      lines.forEach((cell, i) => cell.forEach((line, j) => {
+        this.ops.push(`BT /${bold ? 'F2' : 'F1'} ${size} Tf 0.15 0.20 0.24 rg 1 0 0 1 ${(xs[i] + 3).toFixed(1)} ${(this.y - size - 4 - j * (size + 3)).toFixed(1)} Tm (${esc(line)}) Tj ET`);
+      }));
+      this.y -= height;
     };
-    header();
+    row(headers, true);
     for (const r of rows) {
-      if (this.y - 12 < this.margin + 18) { this.newPage(); header(); }
-      this.y -= 10;
-      r.forEach((cell, i) => {
-        const font = i === 0 ? 'F1' : 'F3';
-        this.ops.push(`BT /${font} ${size} Tf 0.15 0.17 0.2 rg 1 0 0 1 ${xs[i].toFixed(1)} ${this.y.toFixed(1)} Tm (${esc(cell)}) Tj ET`);
-      });
-      this.y -= 2;
+      const height = Math.max(...r.map((cell, i) => wrap(cell, columns[i]).length)) * (size + 3) + 8;
+      if (this.y - height < this.margin + 18) { this.newPage(); row(headers, true); }
+      row(r);
     }
     return this;
   }
@@ -224,6 +245,36 @@ export class Pdf {
   }
 
   setFooter(s) { this.footer = ascii(s); if (this.pages.length === 1) this.drawFooter(); return this; }
+
+  /** A print-sized JPEG figure, with a caption kept on the same page. */
+  image(figure, { width = this.width, maxHeight = 400 } = {}) {
+    if (!figure?.url?.startsWith('data:image/jpeg;base64,')) return this;
+    const height = Math.min(maxHeight, width * figure.height / figure.width);
+    width = height * figure.width / figure.height;
+    this.room(height + 65);
+    const bytes = atob(figure.url.split(',')[1]);
+    const hex = Array.from(bytes, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('') + '>';
+    const name = `Im${this.images.length + 1}`;
+    this.images.push({ name, width: figure.width, height: figure.height, hex });
+    this.ops.push(`q ${width.toFixed(2)} 0 0 ${height.toFixed(2)} ${(this.left + (this.width - width) / 2).toFixed(2)} ${(this.y - height).toFixed(2)} cm /${name} Do Q`);
+    this.y -= height + 8;
+    this.text(figure.caption || figure.title, { size: 8, colour: [0.36, 0.41, 0.46], gap: 2 });
+    return this.gap(9);
+  }
+
+  /** A compact summary band that also prints clearly in grayscale. */
+  metrics(items) {
+    this.room(65);
+    const width = this.width / items.length;
+    items.forEach(([label, value], i) => {
+      const x = this.left + i * width;
+      this.ops.push(`0.93 0.96 0.96 rg ${x.toFixed(2)} ${(this.y - 58).toFixed(2)} ${(width - 6).toFixed(2)} 58 re f`);
+      this.ops.push(`BT /F2 18 Tf 0.06 0.29 0.27 rg 1 0 0 1 ${(x + 10).toFixed(2)} ${(this.y - 26).toFixed(2)} Tm (${esc(value)}) Tj ET`);
+      this.ops.push(`BT /F1 8 Tf 0.35 0.41 0.45 rg 1 0 0 1 ${(x + 10).toFixed(2)} ${(this.y - 44).toFixed(2)} Tm (${esc(label)}) Tj ET`);
+    });
+    this.y -= 67;
+    return this;
+  }
 
   // ------------------------------------------------------------------ output
   /** the whole file, as bytes */
@@ -239,12 +290,14 @@ export class Pdf {
       F3: add('<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>'),
     };
     const pageIds = [];
+    const imageIds = this.images.map((image) => [image.name, add(`<< /Type /XObject /Subtype /Image /Width ${image.width} /Height ${image.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] /Length ${image.hex.length} >>\nstream\n${image.hex}\nendstream`)]);
     for (const ops of this.pages) {
       const stream = ops.join('\n');
       const contentId = add(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
       pageIds.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 `
         + `${this.size[0].toFixed(2)} ${this.size[1].toFixed(2)}] /Resources << /Font << `
-        + `/F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R >> >> `
+        + `/F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R >> `
+        + `/XObject << ${imageIds.map(([name, id]) => `/${name} ${id} 0 R`).join(' ')} >> >> `
         + `/Contents ${contentId} 0 R >>`));
     }
     const infoId = add(`<< /Title (${esc(this.title)}) /Producer (${esc(this.author)}) >>`);

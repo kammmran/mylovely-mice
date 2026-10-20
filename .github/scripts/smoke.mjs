@@ -11,6 +11,7 @@
  * Needs: playwright chromium, and a server on $URL.
  */
 import { chromium } from 'playwright';
+import { checkReport } from './report-smoke.mjs';
 
 const URL_BASE = process.env.URL || 'http://localhost:8777';
 const browser = await chromium.launch({
@@ -128,6 +129,7 @@ await page.keyboard.press('r');
 if (!await page.evaluate(() => window.mouseBeforeCancel === window.sim.agents[0])) fail.push('A simulation shortcut ran inside the help dialog');
 await page.keyboard.press('Escape');
 if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT.replace('.png', '-tools.png') });
+fail.push(...await checkReport(page));
 
 // Optional panels must open on the first click, close, and stay in sync with
 // both the Panels menu and the toolbar.

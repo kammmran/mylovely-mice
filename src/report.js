@@ -2,52 +2,21 @@
  * The session report: what happened to every animal, and which of it is worth
  * looking at.
  *
- * Two halves. The first is bookkeeping — a row per mouse, a row per cage, and
- * the timeline — which is the part you would hand to someone else. The second
- * is the findings: a set of rules that each look for one pattern in the data
- * and, if it is there, say so in a sentence with the number in it and the work
- * it reproduces. A rule that finds nothing says nothing, so the report is only
- * ever about what this particular session actually did.
+ * A captured session, with selectable sections and mice. Findings, images and
+ * recorded signal figures share the same data in the preview and PDF.
  *
  * Everything is generated in the browser. The report can be read on screen,
- * copied, or downloaded as Markdown, and the per-animal table also downloads
- * as CSV for anything that wants to go into a spreadsheet.
+ * copied, or downloaded as a PDF or Markdown. Selected mice also export as CSV.
  */
 
 import { Pdf } from './pdf.js';
 import { ORDER, ROLES } from './neuro/regions.js';
+import { REPORT_SECTIONS, REPORT_PRESETS, READING_NOTES, reportSections } from './reportoptions.js';
+import { colonyFigures, neuralFigures } from './reportvisuals.js';
 
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const pct = (v) => `${Math.round(v * 100)}%`;
-const CSS = `
-#report{left:50%;top:50%;transform:translate(-50%,-50%);width:min(840px,92vw);
-  max-height:86vh;display:none;flex-direction:column;z-index:40}
-#report .body{padding:0 12px 12px;overflow-y:auto}
-#report .rp-act{display:flex;gap:6px;padding:0 12px 10px}
-#report .rp-act button{background:#101a26;border:1px solid var(--line2,#2a3a4f);border-radius:5px;
-  padding:5px 9px;color:var(--ink2,#9fb2c8);font:inherit;font-size:10.5px;cursor:pointer}
-#report .rp-act button:hover{background:#1b2735;color:var(--ink,#e8eef6)}
-#report .rp-act .spacer{flex:1}
-#report h6{margin:12px 0 6px;font-size:9px;letter-spacing:.1em;text-transform:uppercase;
-  color:var(--ink3,#64788f)}
-#report h6:first-child{margin-top:0}
-#report .rp-find{background:#101a26;border-left:2px solid #d55181;border-radius:4px;
-  padding:6px 9px;margin-bottom:4px;font-size:11.5px;color:var(--ink2,#9fb2c8);line-height:1.5}
-#report .rp-find b{color:var(--ink,#e8eef6)}
-#report .rp-find i{font-style:normal;display:block;font-size:9.5px;color:var(--ink3,#64788f);margin-top:2px}
-#report table{width:100%;border-collapse:collapse;font-size:10.5px}
-#report th{text-align:left;font-weight:500;font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--ink3,#64788f);padding:3px 5px;border-bottom:1px solid var(--line2,#2a3a4f)}
-#report td{padding:3px 5px;border-bottom:1px solid var(--line,#15202c);color:var(--ink2,#9fb2c8);
-  font-family:var(--mono,monospace);white-space:nowrap}
-#report td.nm{font-family:inherit;color:var(--ink,#e8eef6)}
-#report tr.dead td{opacity:.5}
-#report .rp-time{font-size:10px;color:var(--ink3,#64788f);line-height:1.6;max-height:190px;
-  overflow-y:auto;font-family:var(--mono,monospace)}
-#report .rp-time b{color:var(--ink2,#9fb2c8);font-weight:500}
-#report .rp-foot{font-size:9.5px;color:var(--ink3,#64788f);line-height:1.5;margin-top:10px;
-  border-top:1px solid var(--line,#15202c);padding-top:8px}
-`;
+
 
 /**
  * The findings. Each rule gets the whole session and returns a finding or
@@ -311,11 +280,19 @@ function gather(ctx) {
   }
   const litters = grid.boxes.map((b) => b.litter).filter(Boolean);
   return {
-    mice, grid, sessionT, journal, causeLabel,
+    mice, sessionT, causeLabel,
+    grid: { open: grid.open, boxes: grid.boxes.map((b) => ({
+      cond: { name: b.cond.name, short: b.cond.short, mice: [...(b.cond.mice || [])] },
+      population: b.population, links: new Array(b.links.length).fill(null),
+      arrived: b.arrived, left: b.left, deaths: b.deaths,
+    })) },
+    journal: journal.map((event) => ({ t: event.t, text: event.text })),
+    observedMouse: ctx.observedMouse?.() || mice[0]?.name || '',
+    signalTracks: ctx.signalTracks?.() || [],
     sink: grid.sinkIndex(),
     crossings: grid.crossings,
-    deaths: mortality.deaths.filter((d) => !String(d.name).startsWith('pup ')),
-    allDeaths: mortality.deaths,
+    deaths: mortality.deaths.filter((d) => !String(d.name).startsWith('pup ')).map((d) => ({ ...d })),
+    allDeaths: mortality.deaths.map((d) => ({ ...d })),
     pupLoss,
     births: litters.reduce((n, l) => n + (l.born || 0), 0),
     weaned: litters.reduce((n, l) => n + (l.weaned || 0), 0),
@@ -323,57 +300,98 @@ function gather(ctx) {
 }
 
 /** the report as Markdown — the thing you would send somebody */
-function markdown(d) {
+function selectedMice(d, options = {}) {
+  if (options.scope === 'current') return d.mice.filter((m) => m.name === d.observedMouse);
+  if (options.scope === 'custom') return d.mice.filter((m) => options.mouseNames?.includes(m.name));
+  return d.mice;
+}
+
+function markdown(d, options = {}) {
+  const sections = reportSections(options.sections);
+  const mice = selectedMice(d, options);
   const L = [];
-  L.push('# mylovely-mice — session report', '');
-  L.push(`Simulated time: **${fmt(d.sessionT)}** (one day = 5 s, so about `
-    + `${(d.sessionT / 5).toFixed(0)} simulated days).`);
-  L.push(`${d.mice.filter((m) => !m.dead).length} animals alive, ${d.allDeaths.length} dead, `
-    + `${d.crossings} tunnel crossings, tunnels **${d.grid.open ? 'open' : 'shut'}**.`, '');
-
-  L.push('## What is interesting', '');
-  for (const f of d.findings) {
-    L.push(`- **${f.head.replace(/<\/?b>/g, '')}**`);
-    L.push(`  ${f.body}${f.ref ? ` *(${f.ref})*` : ''}`);
+  L.push(`# ${options.title || 'Session report'}`, '', `mylovely-mice · Snapshot ${fmt(d.sessionT)}${sections.signals || sections.snapshots ? ` · Observed mouse: ${d.observedMouse}` : ''}`, '');
+  if (sections.overview) {
+    L.push('## Session overview', '');
+    L.push(`Simulated time: **${fmt(d.sessionT)}** (one day = 5 s, so about `
+      + `${(d.sessionT / 5).toFixed(0)} simulated days).`);
+    L.push(`${d.mice.filter((m) => !m.dead).length} animals alive, ${d.allDeaths.length} dead, `
+      + `${d.crossings} tunnel crossings, tunnels **${d.grid.open ? 'open' : 'shut'}**.`, '');
   }
-  L.push('');
 
-  L.push('## The nine cages', '');
-  L.push('| cage | condition | mice | tunnels | arrived | left | deaths |');
-  L.push('|---|---|---|---|---|---|---|');
-  for (const b of d.grid.boxes) {
-    L.push(`| ${b.cond.name} | ${b.cond.short} | ${b.population} | ${b.links.length} `
-      + `| ${b.arrived} | ${b.left} | ${b.deaths} |`);
+  if (sections.findings) {
+    L.push('## Findings & observations', '');
+    if (!d.findings.length) L.push('No notable patterns yet.');
+    for (const f of d.findings) {
+      L.push(`- **${f.head.replace(/<\/?b>/g, '')}**`);
+      L.push(`  ${f.body}${f.ref ? ` *(${f.ref})*` : ''}`);
+    }
+    L.push('');
   }
-  L.push('');
 
-  L.push('## Every mouse', '');
-  L.push('| name | sex | cage | age (d) | ate | drank | mated | litters | bites | bitten | condition | crossings | maps | status |');
-  L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
-  for (const m of d.mice) {
-    L.push(`| ${m.name} | ${m.sex} | ${m.cage} | ${m.ageDays} | ${m.ate} | ${m.drank} | ${m.mated} `
-      + `| ${m.litters} | ${m.bites} | ${m.bitesTaken} | ${pct(m.condition)} | ${m.crossings} `
-      + `| ${m.maps} | ${m.dead ? `dead (${d.causeLabel(m.cause)})` : m.state.toLowerCase()} |`);
+  for (const key of ['snapshots', 'charts', 'signals']) if (sections[key]) {
+    L.push(`## ${REPORT_SECTIONS.find((s) => s.key === key).title}`, '');
+    for (const item of d.figures?.[key] || []) L.push(`- **${item.title}** — ${item.caption}`);
+    if (key === 'signals') {
+      const mouse = d.mice.find((m) => m.name === d.observedMouse);
+      if (mouse) L.push('', '| Region | Mean firing rate (Hz) |', '|---|---|',
+        ...mouse.brain.regions.map((r) => `| ${r.acr} | ${r.hz.toFixed(1)} |`));
+      if (!(d.signalTracks || []).some((t) => t.values.length >= 2)) L.push('No recorded signal history yet. Run the simulation, then refresh the snapshot.');
+    }
+    L.push('', 'Images and plotted figures are embedded in the PDF export.', '');
   }
-  L.push('');
 
-  L.push('## What happened, in order', '');
-  for (const e of d.journal) L.push(`- \`${fmt(e.t)}\` ${e.text}`);
-  L.push('');
+  if (sections.cages) {
+    L.push('## Cage comparison', '');
+    L.push('| cage | condition | mice | tunnels | arrived | left | deaths |');
+    L.push('|---|---|---|---|---|---|---|');
+    for (const b of d.grid.boxes) {
+      L.push(`| ${b.cond.name} | ${b.cond.short} | ${b.population} | ${b.links.length} `
+        + `| ${b.arrived} | ${b.left} | ${b.deaths} |`);
+    }
+    L.push('');
+  }
 
-  L.push('## Notes on reading this', '');
-  L.push('- One simulated day is five seconds. Hunger, thirst and the oestrous cycle are compressed to match.');
-  L.push('- Nothing here is played back: every number comes from a tuning curve built to match a published result, driven by what the animal was doing at the time.');
-  L.push('- The anatomy and the wiring between regions are measured — Allen CCFv3 meshes and Allen Connectivity Atlas tracer strengths.');
-  L.push('- This is a teaching and exploration tool, not a simulator to draw conclusions from.');
+  if (sections.mice) {
+    L.push('## Mouse table', '');
+    L.push('| name | sex | cage | age (d) | ate | drank | mated | litters | bites | bitten | condition | crossings | maps | status |');
+    L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+    for (const m of mice) {
+      L.push(`| ${m.name} | ${m.sex} | ${m.cage} | ${m.ageDays} | ${m.ate} | ${m.drank} | ${m.mated} `
+        + `| ${m.litters} | ${m.bites} | ${m.bitesTaken} | ${pct(m.condition)} | ${m.crossings} `
+        + `| ${m.maps} | ${m.dead ? `dead (${d.causeLabel(m.cause)})` : m.state.toLowerCase()} |`);
+    }
+    L.push('');
+  }
+
+  if (sections.profiles) {
+    L.push('## Detailed mouse profiles', '');
+    for (const m of mice) {
+      L.push(`### ${m.name}`, '', `${m.sex} · ${m.ageDays} days · ${m.cage} · ${m.dead ? 'died' : m.state.toLowerCase()}`, '',
+        `Body condition: ${pct(m.condition)}. Hunger: ${pct(m.brain.hunger)}. Thirst: ${pct(m.brain.thirst)}.`,
+        `Ate: ${m.ate}. Drank: ${m.drank}. Matings: ${m.mated}. Bites given / taken: ${m.bites} / ${m.bitesTaken}.`,
+        `Theta: ${m.brain.theta.toFixed(1)} Hz. Dopamine: ${m.brain.dopamine.toFixed(1)} Hz. Maps: ${m.maps}.`, '',
+        '| Region | Rate (Hz) |', '|---|---|', ...m.brain.regions.map((r) => `| ${r.acr} | ${r.hz.toFixed(1)} |`), '');
+      for (const event of m.history) L.push(`- ${fmt(event.t)} ${event.text}`);
+      L.push('');
+    }
+  }
+
+  if (sections.timeline) {
+    L.push('## Event timeline', '');
+    for (const e of d.journal) L.push(`- \`${fmt(e.t)}\` ${e.text}`);
+    L.push('');
+  }
+
+  if (sections.notes) L.push('## Methods & reading notes', '', ...READING_NOTES.map((note) => `- ${note}`));
   return L.join('\n');
 }
 
-function csv(d) {
+function csv(d, options = {}) {
   const head = ['name', 'sex', 'cage', 'cages_visited', 'age_days', 'ate', 'drank', 'mated',
     'litters', 'bites_given', 'bites_taken', 'dominance', 'condition', 'weight_loss', 'fear',
     'corticosterone', 'freezing_pct', 'crossings', 'maps', 'ripples', 'dead', 'cause'];
-  const rows = d.mice.map((m) => [m.name, m.sex, m.cage, m.visited.join(' / '), m.ageDays, m.ate,
+  const rows = selectedMice(d, options).map((m) => [m.name, m.sex, m.cage, m.visited.join(' / '), m.ageDays, m.ate,
     m.drank, m.mated, m.litters, m.bites, m.bitesTaken, m.rank.toFixed(2), m.condition.toFixed(2),
     m.weightLoss.toFixed(3), m.fear.toFixed(2), m.cort.toFixed(2), m.freezePct.toFixed(2),
     m.crossings, m.maps, m.swr, m.dead ? 'yes' : 'no', m.cause || '']);
@@ -385,149 +403,186 @@ function csv(d) {
  * The long form: every animal, everything known about it, and the state of
  * every modelled region in its brain at the moment the report was taken.
  */
-function pdf(d) {
-  const doc = new Pdf({ title: 'mylovely-mice session report' });
+function pdf(d, options = {}) {
+  const sections = reportSections(options.sections);
+  const mice = selectedMice(d, options);
+  const doc = new Pdf({ title: options.title || 'Session report' });
   doc.setFooter(`mylovely-mice  -  ${fmt(d.sessionT)} of simulated time`);
 
-  doc.h1('mylovely-mice');
-  doc.text('Session report. Nine cages, each under different conditions, every animal wired to a '
-    + 'running model of its own brain.', { size: 10 });
+  doc.line('MYLOVELY-MICE / SESSION REPORT', { size: 9, font: 'F2', colour: [0.08, 0.42, 0.37], gap: 8 });
+  doc.h1(options.title || 'Session report');
+  doc.text(`Snapshot ${fmt(d.sessionT)} · ${mice.length} ${mice.length === 1 ? 'mouse' : 'mice'} included in tables and profiles${sections.signals || sections.snapshots ? ` · Observed mouse: ${d.observedMouse}` : ''}.`, { size: 9 });
+  doc.text(`Included: ${REPORT_SECTIONS.filter((s) => sections[s.key]).map((s) => s.title).join(', ')}.`, { size: 8, colour: [0.4, 0.44, 0.48] });
   doc.gap(2);
-  doc.kvGrid([
-    ['simulated time', `${fmt(d.sessionT)}  (${(d.sessionT / 5).toFixed(0)} days)`],
-    ['animals alive', `${d.mice.filter((m) => !m.dead).length} of ${d.mice.length}`],
-    ['deaths', `${d.allDeaths.length}`],
-    ['tunnels', d.grid.open ? `open - ${d.crossings} crossings` : 'shut'],
-    ['pups born', `${d.births}`],
-    ['pups weaned', `${d.weaned}`],
-  ], 2);
-
-  doc.h2('What is interesting');
-  if (!d.findings.length) doc.text('Nothing notable yet.');
-  for (const f of d.findings) {
-    doc.bullet(`${f.head.replace(/<\/?b>/g, '')}`);
-    doc.text(f.body + (f.ref ? ` (${f.ref})` : ''), { size: 8.5, indent: 10, colour: [0.38, 0.4, 0.44] });
-    doc.gap(2);
+  if (sections.overview) {
+    doc.h2('Session overview');
+    doc.metrics([['Living mice', String(d.mice.filter((m) => !m.dead).length)],
+      ['Recorded deaths', String(d.allDeaths.length)], ['Tunnel crossings', String(d.crossings)]]);
+    doc.kvGrid([
+      ['simulated time', `${fmt(d.sessionT)}  (${(d.sessionT / 5).toFixed(0)} days)`],
+      ['animals alive', `${d.mice.filter((m) => !m.dead).length} of ${d.mice.length}`],
+      ['deaths', `${d.allDeaths.length}`],
+      ['tunnels', d.grid.open ? `open - ${d.crossings} crossings` : 'shut'],
+      ['pups born', `${d.births}`],
+      ['pups weaned', `${d.weaned}`],
+    ], 2);
   }
 
-  doc.h2('The nine cages');
-  doc.table(
-    ['cage', 'condition', 'mice', 'tunnels', 'arrived', 'left', 'deaths'],
-    d.grid.boxes.map((b) => [b.cond.name, b.cond.short, String(b.population),
-      String(b.links.length), String(b.arrived), String(b.left), String(b.deaths)]),
-    [2.4, 2.6, 0.8, 0.9, 0.9, 0.7, 0.8],
-  );
-
-  doc.h2('Every mouse');
-  doc.text('One section per animal: what it has done, what state it is in, and what every '
-    + 'modelled region of its brain was doing when this was taken.', { size: 8.5, colour: [0.4, 0.42, 0.46] });
-
-  for (const m of d.mice) {
-    const br = m.brain;
-    doc.room(150);
-    doc.gap(6);
-    doc.h3(m.name, m.dead ? `dead - ${d.causeLabel(m.cause)}`
-      : `${m.state.toLowerCase()} - ${m.cage}`);
-    doc.rule([0.86, 0.88, 0.9]);
-
-    doc.kvGrid([
-      ['age', `${m.ageDays} days${m.mature ? '' : ' (juvenile)'}`],
-      ['cage', m.cage],
-      ['tunnel crossings', String(m.crossings)],
-      ['dominance', m.rank.toFixed(2)],
-      ['body condition', pct(m.condition)],
-      ['weight loss', pct(m.weightLoss)],
-    ], 2);
-    // a long list of its own: it does not fit in half a column
-    doc.kv('cages lived in', m.visited.join(', ') || m.cage, { size: 8.5, labelW: 112 });
-    doc.kv('status', m.dead ? `dead - ${d.causeLabel(m.cause)}` : m.state.toLowerCase(),
-      { size: 8.5, labelW: 112 });
-
-    doc.gap(3);
-    doc.line('behaviour', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 1 });
-    doc.kvGrid([
-      ['cheese eaten', String(m.ate)],
-      ['drinks', String(m.drank)],
-      ['matings', String(m.mated)],
-      ['litters', String(m.litters)],
-      ['pups in care', String(m.pups)],
-      ['bites given', String(m.bites)],
-      ['bites taken', String(m.bitesTaken)],
-      ['sharp-wave ripples', String(m.swr)],
-    ], 2);
-
-    doc.gap(3);
-    doc.line('internal state', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 1 });
-    doc.kvGrid([
-      ['hunger', pct(br.hunger)],
-      ['thirst', pct(br.thirst)],
-      ['libido', pct(br.libido)],
-      ['mate drive', pct(br.mateDrive)],
-      ['body condition', pct(br.bodyCondition)],
-      [m.sex === 'F' ? 'oestrus' : 'paternal state', m.sex === 'F' ? pct(br.estrous) : pct(br.paternal)],
-      ['fear', pct(br.fear || m.fear)],
-      ['corticosterone', pct(br.cort || m.cort)],
-      ['freezing (30 s avg)', pct(m.freezePct)],
-      ['aggression', pct(br.aggression)],
-      ['infanticidal drive', pct(br.infanticide)],
-      ['avoidance of stim. quadrant', br.quadrant == null ? 'n/a' : pct(br.quadrant)],
-    ], 2);
-    if (br.pregnant) doc.kv('pregnant', `day ${(br.gestation * 19.5).toFixed(0)} of 19.5`);
-    if (br.lactating) doc.kv('lactating', `parental drive ${pct(br.parental)}`);
-    const off = Object.entries(br.drives).filter(([, v]) => !v).map(([k]) => k);
-    if (off.length) doc.kv('circuits switched off', off.join(', '));
-
-    doc.gap(3);
-    doc.line('hippocampus and reward', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 1 });
-    doc.kvGrid([
-      ['theta', `${br.theta.toFixed(1)} Hz`],
-      ['dopamine', `${br.dopamine.toFixed(1)} Hz`],
-      ['learned value V(s)', br.value.toFixed(3)],
-      ['maps held', `${m.maps} of nine cages`],
-      ['population rate', br.detail > 0 ? `${(br.spikes / 1000).toFixed(1)} k spikes/s` : 'not sampled'],
-      ['alive', br.alive ? 'yes' : 'no'],
-    ], 2);
-
-    doc.gap(4);
-    doc.line('every region, now', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 2 });
-    // three columns of acronym + rate, so 38 regions fit in a few lines
-    const regs = br.regions;
-    const per = Math.ceil(regs.length / 3);
-    for (let i = 0; i < per; i++) {
-      const row = [regs[i], regs[i + per], regs[i + per * 2]].filter(Boolean);
-      doc.room(11);
-      doc.y -= 8.5;
-      row.forEach((r, j) => {
-        const x = doc.left + j * (doc.width / 3);
-        doc.ops.push(`BT /F2 8 Tf 0.3 0.33 0.38 rg 1 0 0 1 ${x.toFixed(1)} ${doc.y.toFixed(1)} Tm (${r.acr}) Tj ET`);
-        doc.ops.push(`BT /F3 8 Tf 0.12 0.14 0.17 rg 1 0 0 1 ${(x + 46).toFixed(1)} ${doc.y.toFixed(1)} Tm (${r.hz.toFixed(1)} Hz) Tj ET`);
-      });
-      doc.y -= 1.5;
+  if (sections.findings) {
+    doc.h2('Findings & observations');
+    if (!d.findings.length) doc.text('Nothing notable yet.');
+    for (const f of d.findings) {
+      doc.bullet(`${f.head.replace(/<\/?b>/g, '')}`);
+      doc.text(f.body + (f.ref ? ` (${f.ref})` : ''), { size: 8.5, indent: 10, colour: [0.38, 0.4, 0.44] });
+      doc.gap(2);
     }
+  }
 
-    if (m.history.length) {
+  for (const key of ['snapshots', 'charts', 'signals']) if (sections[key]) {
+    const figures = d.figures?.[key] || [];
+    doc.room(figures.length ? 380 : 70);
+    doc.h2(REPORT_SECTIONS.find((s) => s.key === key).title);
+    if (!figures.length) doc.text(key === 'snapshots' ? 'Simulation images were not available at this snapshot.' : 'No figure data available.');
+    for (const item of figures) doc.image(item, { maxHeight: key === 'snapshots' ? 265 : 400 });
+    if (key === 'signals' && !(d.signalTracks || []).some((t) => t.values.length >= 2)) {
+      doc.text('No recorded signal history yet. Run the simulation, then refresh the snapshot.');
+    }
+  }
+
+  if (sections.cages) {
+    doc.h2('Cage comparison');
+    doc.table(
+      ['cage', 'condition', 'mice', 'tunnels', 'arrived', 'left', 'deaths'],
+      d.grid.boxes.map((b) => [b.cond.name, b.cond.short, String(b.population),
+        String(b.links.length), String(b.arrived), String(b.left), String(b.deaths)]),
+      [2.4, 2.6, 0.8, 0.9, 0.9, 0.7, 0.8],
+    );
+  }
+
+  if (sections.mice) {
+    doc.h2('Mouse table');
+    if (!mice.length) doc.text('No mice selected.');
+    else {
+      const tables = mouseTables(mice, d);
+      doc.h3('Identity & health');
+      doc.table(tables[0].headers, tables[0].rows, [1.4, 0.5, 1.7, 0.7, 1, 1.4], { size: 8 });
+      doc.h3('Behavior & learning');
+      doc.table(tables[1].headers, tables[1].rows, [1.4, 0.7, 0.7, 0.7, 0.7, 0.7, 0.7, 0.9, 0.7], { size: 8 });
+    }
+  }
+
+  if (sections.profiles) {
+    doc.h2('Detailed mouse profiles');
+    doc.text('One section per animal: what it has done, what state it is in, and what every '
+      + 'modelled region of its brain was doing when this was taken.', { size: 8.5, colour: [0.4, 0.42, 0.46] });
+
+    if (!mice.length) doc.text('No mice selected.');
+    for (const m of mice) {
+      const br = m.brain;
+      doc.room(150);
+      doc.gap(6);
+      doc.h3(m.name, m.dead ? `dead - ${d.causeLabel(m.cause)}`
+        : `${m.state.toLowerCase()} - ${m.cage}`);
+      doc.rule([0.86, 0.88, 0.9]);
+
+      doc.kvGrid([
+        ['age', `${m.ageDays} days${m.mature ? '' : ' (juvenile)'}`],
+        ['cage', m.cage],
+        ['tunnel crossings', String(m.crossings)],
+        ['dominance', m.rank.toFixed(2)],
+        ['body condition', pct(m.condition)],
+        ['weight loss', pct(m.weightLoss)],
+      ], 2);
+      // a long list of its own: it does not fit in half a column
+      doc.kv('cages lived in', m.visited.join(', ') || m.cage, { size: 8.5, labelW: 112 });
+      doc.kv('status', m.dead ? `dead - ${d.causeLabel(m.cause)}` : m.state.toLowerCase(),
+        { size: 8.5, labelW: 112 });
+
+      doc.gap(3);
+      doc.line('behaviour', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 1 });
+      doc.kvGrid([
+        ['cheese eaten', String(m.ate)],
+        ['drinks', String(m.drank)],
+        ['matings', String(m.mated)],
+        ['litters', String(m.litters)],
+        ['pups in care', String(m.pups)],
+        ['bites given', String(m.bites)],
+        ['bites taken', String(m.bitesTaken)],
+        ['sharp-wave ripples', String(m.swr)],
+      ], 2);
+
+      doc.gap(3);
+      doc.line('internal state', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 1 });
+      doc.kvGrid([
+        ['hunger', pct(br.hunger)],
+        ['thirst', pct(br.thirst)],
+        ['libido', pct(br.libido)],
+        ['mate drive', pct(br.mateDrive)],
+        ['body condition', pct(br.bodyCondition)],
+        [m.sex === 'F' ? 'oestrus' : 'paternal state', m.sex === 'F' ? pct(br.estrous) : pct(br.paternal)],
+        ['fear', pct(br.fear || m.fear)],
+        ['corticosterone', pct(br.cort || m.cort)],
+        ['freezing (30 s avg)', pct(m.freezePct)],
+        ['aggression', pct(br.aggression)],
+        ['infanticidal drive', pct(br.infanticide)],
+        ['avoidance of stim. quadrant', br.quadrant == null ? 'n/a' : pct(br.quadrant)],
+      ], 2);
+      if (br.pregnant) doc.kv('pregnant', `day ${(br.gestation * 19.5).toFixed(0)} of 19.5`);
+      if (br.lactating) doc.kv('lactating', `parental drive ${pct(br.parental)}`);
+      const off = Object.entries(br.drives).filter(([, v]) => !v).map(([k]) => k);
+      if (off.length) doc.kv('circuits switched off', off.join(', '));
+
+      doc.gap(3);
+      doc.line('hippocampus and reward', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 1 });
+      doc.kvGrid([
+        ['theta', `${br.theta.toFixed(1)} Hz`],
+        ['dopamine', `${br.dopamine.toFixed(1)} Hz`],
+        ['learned value V(s)', br.value.toFixed(3)],
+        ['maps held', `${m.maps} of nine cages`],
+        ['population rate', br.detail > 0 ? `${(br.spikes / 1000).toFixed(1)} k spikes/s` : 'not sampled'],
+        ['alive', br.alive ? 'yes' : 'no'],
+      ], 2);
+
       doc.gap(4);
-      doc.line('what happened to it', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 2 });
-      for (const e of m.history.slice(-14)) {
-        doc.text(`${fmt(e.t)}  ${e.text}`, { size: 8, indent: 6, colour: [0.35, 0.37, 0.41], gap: 1.6 });
+      doc.line('every region, now', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 2 });
+      // three columns of acronym + rate, so 38 regions fit in a few lines
+      const regs = br.regions;
+      const per = Math.ceil(regs.length / 3);
+      for (let i = 0; i < per; i++) {
+        const row = [regs[i], regs[i + per], regs[i + per * 2]].filter(Boolean);
+        doc.room(11);
+        doc.y -= 8.5;
+        row.forEach((r, j) => {
+          const x = doc.left + j * (doc.width / 3);
+          doc.ops.push(`BT /F2 8 Tf 0.3 0.33 0.38 rg 1 0 0 1 ${x.toFixed(1)} ${doc.y.toFixed(1)} Tm (${r.acr}) Tj ET`);
+          doc.ops.push(`BT /F3 8 Tf 0.12 0.14 0.17 rg 1 0 0 1 ${(x + 46).toFixed(1)} ${doc.y.toFixed(1)} Tm (${r.hz.toFixed(1)} Hz) Tj ET`);
+        });
+        doc.y -= 1.5;
       }
+
+      if (m.history.length) {
+        doc.gap(4);
+        doc.line('what happened to it', { size: 8, font: 'F2', colour: [0.45, 0.47, 0.5], gap: 2 });
+        for (const e of m.history) {
+          doc.text(`${fmt(e.t)}  ${e.text}`, { size: 8, indent: 6, colour: [0.35, 0.37, 0.41], gap: 1.6 });
+        }
+      }
+      doc.gap(4);
     }
-    doc.gap(4);
   }
 
-  doc.h2('What happened, in order');
-  for (const e of d.journal.slice(-160)) {
-    doc.text(`${fmt(e.t)}  ${e.text}`, { size: 8, indent: 4, colour: [0.3, 0.32, 0.36], gap: 1.5 });
+  if (sections.timeline) {
+    doc.h2('Event timeline');
+    if (!d.journal.length) doc.text('No events recorded yet.');
+    for (const e of d.journal) {
+      doc.text(`${fmt(e.t)}  ${e.text}`, { size: 8, indent: 4, colour: [0.3, 0.32, 0.36], gap: 1.5 });
+    }
   }
 
-  doc.h2('Notes on reading this');
-  for (const n of [
-    'One simulated day is five seconds. Hunger, thirst and the oestrous cycle are compressed to match, and are labelled where they appear.',
-    'Nothing here is played back. Every number comes from a tuning curve built to match a published response property, driven by what the animal was doing at the time.',
-    'The anatomy is real: Allen Mouse Brain CCFv3 structure meshes, and the strengths between regions are measured anterograde tracer projections from the Allen Connectivity Atlas.',
-    'Firing rates are the display-smoothed mean across the modelled cells of each region at the moment the report was taken, not an average over the session.',
-    'This is a teaching and exploration tool. The populations are small and the tuning curves are analytic rather than fitted, so it is not something to draw scientific conclusions from.',
-  ]) doc.bullet(n, { size: 8.5 });
+  if (sections.notes) {
+    doc.h2('Methods & reading notes');
+    for (const note of READING_NOTES) doc.bullet(note, { size: 8.5 });
+  }
 
   return doc;
 }
@@ -542,132 +597,246 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-export class Report {
-  constructor(ctx) { this.ctx = ctx; }
+const escapeHtml = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const plain = (value) => String(value).replace(/<[^>]*>/g, '');
+const sectionHeading = (key) => REPORT_SECTIONS.find((section) => section.key === key).title;
+const PREFERENCE_KEY = 'mlm-report-v1';
 
-  /** the data and the findings — everything the panel needs */
+function readOptions() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(PREFERENCE_KEY) || '{}') || {}; } catch { /* private mode */ }
+  return {
+    title: typeof saved.title === 'string' ? saved.title.slice(0, 80) : 'Session report',
+    sections: reportSections(saved.sections),
+    scope: ['all', 'current', 'custom'].includes(saved.scope) ? saved.scope : 'all',
+    mouseNames: Array.isArray(saved.mouseNames) ? saved.mouseNames.filter((name) => typeof name === 'string') : [],
+  };
+}
+
+function tableHtml(headers, rows) {
+  return `<div class="rp-table-wrap" tabindex="0" role="region" aria-label="${escapeHtml(headers[0])} table"><table><thead><tr>${headers.map((header) => `<th scope="col">${escapeHtml(header)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function mouseTables(mice, d) {
+  return [{
+    title: 'Identity & health', headers: ['Mouse', 'Sex', 'Cage', 'Age (d)', 'Condition', 'Status'],
+    rows: mice.map((mouse) => [mouse.name, mouse.sex, mouse.cage, mouse.ageDays, pct(mouse.condition), mouse.dead ? `Died · ${d.causeLabel(mouse.cause)}` : mouse.state.toLowerCase()]),
+  }, {
+    title: 'Behavior & learning', headers: ['Mouse', 'Ate', 'Drank', 'Mated', 'Litters', 'Bites', 'Bitten', 'Crossings', 'Maps'],
+    rows: mice.map((mouse) => [mouse.name, mouse.ate, mouse.drank, mouse.mated, mouse.litters, mouse.bites, mouse.bitesTaken, mouse.crossings, mouse.maps]),
+  }];
+}
+
+function profileHtml(mouse, d) {
+  const brain = mouse.brain;
+  return `<details class="rp-profile"><summary><strong>${escapeHtml(mouse.name)}</strong><span>${escapeHtml(mouse.cage)} · ${mouse.dead ? 'Died' : `${pct(mouse.condition)} condition`}</span></summary>
+    <p>${mouse.sex === 'F' ? 'Female' : 'Male'} · ${mouse.ageDays} days old · ${escapeHtml(mouse.dead ? d.causeLabel(mouse.cause) : mouse.state.toLowerCase())}</p>
+    <dl class="rp-profile-facts">${[
+      ['Food / water', `${mouse.ate} meals / ${mouse.drank} drinks`], ['Bites given / taken', `${mouse.bites} / ${mouse.bitesTaken}`],
+      ['Matings / litters', `${mouse.mated} / ${mouse.litters}`], ['Crossings / maps', `${mouse.crossings} / ${mouse.maps}`],
+      ['Hunger / thirst', `${pct(brain.hunger)} / ${pct(brain.thirst)}`], ['Fear / stress', `${pct(mouse.fear)} / ${pct(mouse.cort)}`],
+      ['Theta / dopamine', `${brain.theta.toFixed(1)} Hz / ${brain.dopamine.toFixed(1)} Hz`],
+      ['Condition / weight loss', `${pct(mouse.condition)} / ${pct(mouse.weightLoss)}`],
+      ['Dominance', mouse.rank.toFixed(2)], ['Cages visited', mouse.visited.join(', ') || mouse.cage],
+      ['Libido / mate drive', `${pct(brain.libido)} / ${pct(brain.mateDrive)}`],
+      ['Oestrus / paternal state', `${pct(brain.estrous)} / ${pct(brain.paternal)}`],
+      ['Pregnancy', brain.pregnant ? `Day ${(brain.gestation * 19.5).toFixed(0)} of 19.5` : 'Not pregnant'],
+      ['Lactation / parental drive', `${brain.lactating ? 'Lactating' : 'Not lactating'} / ${pct(brain.parental)}`],
+      ['Freezing (30 s average)', pct(mouse.freezePct)], ['Aggression / infanticidal drive', `${pct(brain.aggression)} / ${pct(brain.infanticide)}`],
+      ['Stimulus quadrant occupancy', brain.quadrant == null ? 'Not sampled' : pct(brain.quadrant)],
+      ['Learned value / ripples', `${brain.value.toFixed(3)} / ${mouse.swr}`],
+      ['Population spike rate', brain.detail > 0 ? `${(brain.spikes / 1000).toFixed(1)} k spikes/s` : 'Not sampled'],
+      ['Circuits disabled', Object.entries(brain.drives).filter(([, value]) => !value).map(([name]) => name).join(', ') || 'None'],
+    ].map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>
+    ${tableHtml(['Brain region', 'Rate (Hz)', 'Role'], brain.regions.map((region) => [region.acr, region.hz.toFixed(1), region.role]))}
+    <div class="rp-timeline">${mouse.history.map((event) => `<div><time>${fmt(event.t)}</time><span>${escapeHtml(event.text)}</span></div>`).join('') || '<p>No individual events recorded yet.</p>'}</div>
+  </details>`;
+}
+
+export class Report {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.options = readOptions();
+    this.snapshot = null;
+    this.busy = false;
+    this.chartScope = null;
+  }
+
   survey() {
     const d = gather(this.ctx);
-    d.findings = RULES.map((r) => { try { return r(d); } catch { return null; } }).filter(Boolean);
+    d.findings = RULES.map((rule) => { try { return rule(d); } catch { return null; } }).filter(Boolean);
     return d;
   }
 
-  /** the same, plus the two export formats. Only built when asked for. */
-  build() {
+  refresh() {
     const d = this.survey();
-    d.markdown = markdown(d);
-    d.csv = csv(d);
-    return d;
+    d.figures = { snapshots: [], charts: [], signals: neuralFigures(d) };
+    try { d.figures.snapshots = this.ctx.captureImages?.() || []; }
+    catch { d.imageNote = 'The simulation images could not be captured. Refresh the snapshot to try again.'; }
+    this.snapshot = d;
+    this.chartScope = null;
+    this.renderMouseChoices();
+    this.render();
+  }
+
+  data() {
+    if (!this.snapshot) this.refresh();
+    const mice = selectedMice(this.snapshot, this.options);
+    const key = JSON.stringify(mice.map((mouse) => mouse.name));
+    if (key !== this.chartScope) {
+      this.snapshot.figures.charts = colonyFigures(this.snapshot, mice);
+      this.chartScope = key;
+    }
+    return this.snapshot;
+  }
+
+  build() {
+    const d = this.data();
+    const options = { ...this.options, title: this.options.title.trim() || 'Session report' };
+    return { ...d, markdown: markdown(d, options), csv: csv(d, options) };
+  }
+
+  saveOptions() {
+    try { localStorage.setItem(PREFERENCE_KEY, JSON.stringify(this.options)); } catch { /* private mode */ }
   }
 
   mount(parent) {
-    const style = document.createElement('style');
-    style.textContent = CSS;
-    document.head.appendChild(style);
     const card = document.createElement('div');
-    card.className = 'float';
-    card.id = 'report';
-    card.dataset.panel = 'report';
+    card.className = 'float'; card.id = 'report'; card.dataset.panel = 'report';
     card.innerHTML = `
-      <h5 data-fold><span>session report</span><span id="rp-sub"></span><span class="tw">▾</span></h5>
-      <div class="rp-act">
-        <button data-act="pdf">download .pdf</button>
-        <button data-act="md">download .md</button>
-        <button data-act="csv">download .csv</button>
-        <button data-act="copy">copy</button>
-        <span class="spacer"></span>
-        <button data-act="close">close</button>
+      <h5 data-fold><span>Session report</span><span id="rp-sub"></span><span class="tw">▾</span></h5>
+      <div class="body" id="rp-body">
+        <div class="rp-workspace-bar"><span id="rp-snapshot-label"></span><button type="button" id="rp-refresh">Refresh snapshot</button></div>
+        <div class="rp-layout">
+          <details class="rp-options" id="rp-options" ${matchMedia('(min-width: 1051px)').matches ? 'open' : ''}>
+            <summary>Report options <span id="rp-section-count"></span></summary>
+            <div class="rp-options-content">
+              <label class="rp-field">Report title<input id="rp-title" maxlength="80" type="text" placeholder="Session report"></label>
+              <div class="rp-option-label">Quick presets</div>
+              <div class="rp-presets" role="group" aria-label="Report preset">
+                <button type="button" data-preset="summary">Summary</button><button type="button" data-preset="visual">Visual</button><button type="button" data-preset="complete">Complete</button>
+              </div>
+              <div class="rp-section-label"><strong>Include in report</strong><button type="button" id="rp-clear">Clear</button></div>
+              <fieldset class="rp-section-list"><legend class="sr-only">Report sections</legend>${REPORT_SECTIONS.map((section) => `
+                <label><input type="checkbox" data-report-section="${section.key}"><span><strong>${section.title}</strong><small>${section.detail}</small></span></label>`).join('')}</fieldset>
+              <label class="rp-field">Mice in tables & profiles<select id="rp-scope"><option value="all">All mice</option><option value="current">Observed mouse only</option><option value="custom">Choose mice…</option></select></label>
+              <fieldset class="rp-mouse-choices" id="rp-mouse-choices" hidden><legend>Choose mice</legend><div class="rp-mouse-actions"><button type="button" id="rp-mice-all">Select all mice</button><button type="button" id="rp-mice-none">Clear selection</button></div><div id="rp-mouse-list"></div></fieldset>
+              <p class="rp-option-hint">Colony totals cover all cages. Signals and images show the observed mouse at snapshot time.</p>
+            </div>
+          </details>
+          <article class="rp-preview" id="rp-preview" aria-label="Report preview"></article>
+        </div>
       </div>
-      <div class="body" id="rp-body"></div>`;
+      <div class="rp-export-footer">
+        <div class="rp-export-line"><strong id="rp-export-count"></strong><span id="rp-status" role="status" aria-live="polite"></span></div>
+        <div class="rp-act"><button type="button" class="rp-download" data-act="pdf">Download PDF</button><button type="button" data-act="md">Markdown</button><button type="button" data-act="csv">Mouse CSV</button><button type="button" data-act="copy">Copy text</button></div>
+        <p>PDF includes selected images and figures. Markdown includes their descriptions; CSV contains the selected mice.</p>
+      </div>`;
     (parent || document.body).appendChild(card);
-    card.style.display = 'none';
-    this.card = card;
-    card.querySelector('[data-act="close"]').onclick = () => this.open(false);
-    card.querySelector('[data-act="md"]').onclick = () =>
-      download(`mylovely-mice-report-${fmt(this.ctx.sessionT()).replace(':', 'm')}s.md`,
-        this.build().markdown, 'text/markdown');
-    card.querySelector('[data-act="pdf"]').onclick = () => {
-      const btn = card.querySelector('[data-act="pdf"]');
-      btn.textContent = 'building...';
-      // let the button repaint before the document is built
-      setTimeout(() => {
-        try {
-          pdf(this.survey()).save(`mylovely-mice-report-${Math.round(this.ctx.sessionT())}s.pdf`);
-          btn.textContent = 'download .pdf';
-        } catch (e) {
-          btn.textContent = 'failed';
-          console.error('pdf build failed:', e);
-          setTimeout(() => { btn.textContent = 'download .pdf'; }, 2000);
-        }
-      }, 30);
+    card.style.display = 'none'; this.card = card;
+    const $ = (selector) => card.querySelector(selector);
+    $('#rp-title').value = this.options.title;
+    $('#rp-title').oninput = (event) => { this.options.title = event.target.value; this.saveOptions(); this.render(); };
+    $('#rp-scope').onchange = (event) => {
+      this.options.scope = event.target.value;
+      if (this.options.scope === 'custom' && !this.options.mouseNames.length) this.options.mouseNames = this.snapshot.mice.map((mouse) => mouse.name);
+      this.saveOptions(); this.render();
     };
-    card.querySelector('[data-act="csv"]').onclick = () =>
-      download('mylovely-mice-mice.csv', this.build().csv, 'text/csv');
-    card.querySelector('[data-act="copy"]').onclick = async () => {
-      const btn = card.querySelector('[data-act="copy"]');
-      try {
-        await navigator.clipboard.writeText(this.build().markdown);
-        btn.textContent = 'copied';
-      } catch { btn.textContent = 'could not copy'; }
-      setTimeout(() => { btn.textContent = 'copy'; }, 1600);
+    $('#rp-mice-all').onclick = () => { this.options.mouseNames = this.snapshot.mice.map((mouse) => mouse.name); this.saveOptions(); this.render(); };
+    $('#rp-mice-none').onclick = () => { this.options.mouseNames = []; this.saveOptions(); this.render(); };
+    $('#rp-options').addEventListener('change', (event) => {
+      const input = event.target;
+      if (input.dataset.reportSection) this.options.sections[input.dataset.reportSection] = input.checked;
+      else if (input.dataset.reportMouse) {
+        const names = new Set(this.options.mouseNames);
+        if (input.checked) names.add(input.dataset.reportMouse); else names.delete(input.dataset.reportMouse);
+        this.options.mouseNames = [...names];
+      } else return;
+      this.saveOptions(); this.render();
+    });
+    for (const button of card.querySelectorAll('[data-preset]')) button.onclick = () => {
+      const preset = REPORT_PRESETS[button.dataset.preset];
+      for (const section of REPORT_SECTIONS) this.options.sections[section.key] = preset.includes(section.key);
+      this.saveOptions(); this.render();
+    };
+    $('#rp-clear').onclick = () => {
+      for (const section of REPORT_SECTIONS) this.options.sections[section.key] = false;
+      this.saveOptions(); this.render();
+    };
+    $('#rp-refresh').onclick = () => {
+      $('#rp-refresh').disabled = true;
+      requestAnimationFrame(() => { try { this.refresh(); } finally { $('#rp-refresh').disabled = false; } });
+    };
+    $('[data-act="md"]').onclick = () => download(this.filename('md'), this.build().markdown, 'text/markdown');
+    $('[data-act="csv"]').onclick = () => download(this.filename('csv'), this.build().csv, 'text/csv');
+    $('[data-act="copy"]').onclick = async () => {
+      try { await navigator.clipboard.writeText(this.build().markdown); $('#rp-status').textContent = 'Report text copied'; }
+      catch { $('#rp-status').textContent = 'Copy unavailable. Download Markdown instead.'; }
+    };
+    $('[data-act="pdf"]').onclick = () => {
+      if (this.busy) return;
+      const source = this.data(), d = { ...source, figures: { ...source.figures } };
+      const options = structuredClone(this.options), filename = this.filename('pdf');
+      options.title = options.title.trim() || 'Session report';
+      this.busy = true; this.render(); $('#rp-status').textContent = 'Building PDF…';
+      setTimeout(() => {
+        try { pdf(d, options).save(filename); $('#rp-status').textContent = 'PDF downloaded'; }
+        catch (error) { $('#rp-status').textContent = 'PDF could not be built. Please try again.'; console.error('PDF export failed:', error); }
+        finally { this.busy = false; this.updateExportState(); }
+      }, 40);
     };
     return this;
   }
 
-  open(v) {
+  filename(extension) { return `mylovely-mice-report-${Math.round(this.snapshot.sessionT)}s.${extension}`; }
+
+  open(value) {
     if (!this.card) return;
-    this.card.style.display = v ? 'flex' : 'none';
-    if (v) this.render();
+    this.card.style.display = value ? 'flex' : 'none';
+    if (value) { this.card.removeAttribute('data-collapsed'); this.refresh(); }
   }
   isOpen() { return !!this.card && this.card.style.display !== 'none'; }
 
+  renderMouseChoices() {
+    this.card.querySelector('#rp-mouse-list').innerHTML = this.snapshot.mice.map((mouse) =>
+      `<label><input type="checkbox" data-report-mouse="${escapeHtml(mouse.name)}"><span>${escapeHtml(mouse.name)}<small>${escapeHtml(mouse.cage)}${mouse.dead ? ' · died' : ''}</small></span></label>`).join('');
+  }
+
+  updateExportState() {
+    const count = Object.values(this.options.sections).filter(Boolean).length;
+    const mouseCount = selectedMice(this.snapshot, this.options).length;
+    this.card.querySelector('#rp-section-count').textContent = `${count} / ${REPORT_SECTIONS.length}`;
+    this.card.querySelector('#rp-export-count').textContent = `${count} sections · ${mouseCount} ${mouseCount === 1 ? 'mouse' : 'mice'}`;
+    for (const button of this.card.querySelectorAll('[data-act]')) button.disabled = this.busy || (button.dataset.act === 'csv' ? !mouseCount : !count);
+    this.card.querySelector('[data-act="pdf"]').textContent = this.busy ? 'Building PDF…' : 'Download PDF';
+  }
+
   render() {
-    const d = this.survey();
-    const body = this.card.querySelector('#rp-body');
-    const sub = this.card.querySelector('#rp-sub');
-    sub.textContent = `${fmt(d.sessionT)} · ${(d.sessionT / 5).toFixed(0)} simulated days`;
-
-    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    if (!this.snapshot || !this.card) return;
+    const d = this.data(), sections = this.options.sections, mice = selectedMice(d, this.options);
+    this.card.querySelector('#rp-sub').textContent = `${fmt(d.sessionT)} · ${(d.sessionT / 5).toFixed(0)} simulated days · snapshot`;
+    this.card.querySelector('#rp-snapshot-label').textContent = `Captured at ${fmt(d.sessionT)} · ${d.observedMouse}`;
+    this.card.querySelector('#rp-scope').value = this.options.scope;
+    this.card.querySelector('#rp-mouse-choices').hidden = this.options.scope !== 'custom';
+    for (const input of this.card.querySelectorAll('[data-report-section]')) input.checked = sections[input.dataset.reportSection];
+    for (const input of this.card.querySelectorAll('[data-report-mouse]')) input.checked = this.options.mouseNames.includes(input.dataset.reportMouse);
+    this.updateExportState();
     const H = [];
-    H.push('<h6>what is interesting</h6>');
-    if (!d.findings.length) {
-      H.push('<div class="rp-find">Nothing has happened yet. Let it run, or open the tunnels.</div>');
-    }
-    for (const f of d.findings) {
-      H.push(`<div class="rp-find">${f.head}<i>${esc(f.body)}${f.ref ? ` — ${esc(f.ref)}` : ''}</i></div>`);
-    }
-
-    H.push('<h6>the nine cages</h6><table><tr><th>cage</th><th>condition</th><th>mice</th>'
-      + '<th>tunnels</th><th>in</th><th>out</th><th>deaths</th></tr>');
-    for (const b of d.grid.boxes) {
-      H.push(`<tr><td class="nm">${esc(b.cond.name)}</td><td>${esc(b.cond.short)}</td>`
-        + `<td>${b.population}</td><td>${b.links.length}</td><td>${b.arrived}</td>`
-        + `<td>${b.left}</td><td>${b.deaths}</td></tr>`);
-    }
-    H.push('</table>');
-
-    H.push(`<h6>every mouse — ${d.mice.length}</h6><table><tr><th>name</th><th>sex</th><th>cage</th>`
-      + '<th>age</th><th>ate</th><th>drank</th><th>mated</th><th>bites</th><th>bitten</th>'
-      + '<th>cond.</th><th>cross.</th><th>maps</th><th>status</th></tr>');
-    for (const m of d.mice) {
-      H.push(`<tr class="${m.dead ? 'dead' : ''}"><td class="nm">${esc(m.name)}</td>`
-        + `<td>${m.sex === 'M' ? '♂' : '♀'}</td><td>${esc(m.cage)}</td><td>${m.ageDays}d</td>`
-        + `<td>${m.ate}</td><td>${m.drank}</td><td>${m.mated}</td><td>${m.bites}</td>`
-        + `<td>${m.bitesTaken}</td><td>${pct(m.condition)}</td><td>${m.crossings}</td>`
-        + `<td>${m.maps}</td><td>${esc(m.dead ? `dead · ${d.causeLabel(m.cause)}` : m.state.toLowerCase())}</td></tr>`);
-    }
-    H.push('</table>');
-
-    H.push('<h6>what happened, in order</h6><div class="rp-time">');
-    const recent = d.journal.slice(-120).reverse();
-    for (const e of recent) H.push(`<div><b>${fmt(e.t)}</b> ${esc(e.text)}</div>`);
-    if (!recent.length) H.push('<div>nothing yet</div>');
-    H.push('</div>');
-
-    H.push('<div class="rp-foot">One simulated day is five seconds. Nothing here is played back: '
-      + 'every number comes from a tuning curve built to match a published result, driven by what '
-      + 'the animal was doing at the time. A teaching tool, not a simulator to draw conclusions from.</div>');
-    body.innerHTML = H.join('');
+    const add = (key, html) => { if (sections[key]) H.push(`<section class="rp-section" data-report-preview="${key}"><h3>${sectionHeading(key)}</h3>${html}</section>`); };
+    const figures = (key) => (d.figures[key] || []).map((item) => `<figure><img src="${item.url}" width="${item.width}" height="${item.height}" alt="${escapeHtml(item.title)}"><figcaption>${escapeHtml(item.caption)}</figcaption></figure>`).join('');
+    if (!Object.values(sections).some(Boolean)) H.push('<div class="rp-empty"><h2>Build your report</h2><p>Choose a preset or select the sections you want to include.</p></div>');
+    else H.push(`<header class="rp-document-heading"><small>MYLOVELY-MICE · SESSION SNAPSHOT</small><h2>${escapeHtml(this.options.title.trim() || 'Session report')}</h2><p>${fmt(d.sessionT)} simulated time · ${(d.sessionT / 5).toFixed(0)} simulated days<br>${mice.length} ${mice.length === 1 ? 'mouse' : 'mice'} in tables and profiles${sections.signals || sections.snapshots ? ` · Observed: ${escapeHtml(d.observedMouse)}` : ''}</p></header>`);
+    add('overview', `<div class="rp-summary-grid">${[['Living mice', d.mice.filter((mouse) => !mouse.dead).length], ['Deaths', d.allDeaths.length], ['Crossings', d.crossings]].map(([label, value]) => `<div><strong>${value}</strong><span>${label}</span></div>`).join('')}</div><p>Tunnels ${d.grid.open ? 'open' : 'closed'} · ${d.births} pups born · ${d.weaned} weaned</p>`);
+    add('findings', d.findings.map((finding) => `<div class="rp-finding"><strong>${escapeHtml(plain(finding.head))}</strong><p>${escapeHtml(finding.body)}</p>${finding.ref ? `<small>${escapeHtml(finding.ref)}</small>` : ''}</div>`).join('') || '<p class="rp-empty-note">No notable patterns yet. Run the simulation, then refresh the snapshot.</p>');
+    add('snapshots', figures('snapshots') + (d.imageNote ? `<p class="rp-empty-note">${d.imageNote}</p>` : d.figures.snapshots.length < 2 ? '<p class="rp-empty-note">The brain atlas is still loading. Refresh the snapshot to include it.</p>' : ''));
+    add('charts', figures('charts'));
+    add('signals', `<p>Observed mouse: <strong>${escapeHtml(d.observedMouse)}</strong></p>${figures('signals')}${!(d.signalTracks || []).some((track) => track.values.length >= 2) ? '<p class="rp-empty-note">No recorded signal history yet. Run the simulation, then refresh the snapshot.</p>' : ''}`);
+    add('cages', tableHtml(['Cage', 'Condition', 'Mice', 'Tunnels', 'Arrivals', 'Departures', 'Deaths'], d.grid.boxes.map((box) => [box.cond.name, box.cond.short, box.population, box.links.length, box.arrived, box.left, box.deaths])));
+    add('mice', mice.length ? mouseTables(mice, d).map((table) => `<h4>${table.title}</h4>${tableHtml(table.headers, table.rows)}`).join('') : '<p class="rp-empty-note">No mice selected. Choose mice in Report options.</p>');
+    add('profiles', mice.map((mouse) => profileHtml(mouse, d)).join('') || '<p class="rp-empty-note">No mice selected. Choose mice in Report options.</p>');
+    add('timeline', `<p>Recorded journal · ${d.journal.length} events, in time order</p><div class="rp-timeline">${d.journal.map((event) => `<div><time>${fmt(event.t)}</time><span>${escapeHtml(event.text)}</span></div>`).join('') || '<p>No events recorded yet.</p>'}</div>`);
+    add('notes', `<ul class="rp-notes">${READING_NOTES.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul>`);
+    this.card.querySelector('#rp-preview').innerHTML = H.join('');
   }
 }
 

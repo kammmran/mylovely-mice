@@ -20,6 +20,7 @@ import { Threats, STIMULI, STIMULUS_ORDER, ODOUR_R } from './world/threats.js';
 import { mountMortality, CAUSES } from './world/mortality.js';
 import { ColonyGrid, PITCH } from './world/colonygrid.js';
 import { mountReport } from './report.js';
+import { canvasFigure } from './reportvisuals.js';
 import { BrainView } from './view/brainview.js';
 import { Raster, Trace, drawRateMap, drawPolar } from './view/plots.js';
 import { mountSignals } from './view/signalspanel.js';
@@ -739,7 +740,7 @@ const mortality = mountMortality({
 /**
  * The session report: a row per animal, a row per cage, the timeline, and a
  * set of rules that each look for one pattern worth pointing out. Downloads
- * as Markdown or CSV.
+ * as a visual PDF, Markdown or CSV, with user-selected sections and mice.
  */
 const report = mountReport({
   mount: $('world-pane'),
@@ -748,6 +749,36 @@ const report = mountReport({
   mortality,
   journal: () => journal,
   sessionT: () => sessionT,
+  observedMouse: () => A().name,
+  signalTracks: () => [lfpTrace, daTrace].flatMap((trace) => {
+    const count = Math.min(trace.i, trace.N), start = trace.i - count;
+    return trace.tracks.map((track, index) => ({
+      label: track.label === 'VTA Hz' ? 'VTA dopamine' : track.label, min: track.min, max: track.max,
+      unit: track.label === 'CA1 LFP' ? 'model units' : track.label === 'VTA Hz' ? 'Hz' : 'normalized',
+      period: trace.window / trace.N,
+      values: Array.from({ length: count }, (_, j) => trace.buf[index][(start + j) % trace.N]),
+    }));
+  }),
+  captureImages: () => {
+    renderer.render(scene, camera);
+    const images = [canvasFigure(worldCanvas, 'Platform snapshot', `The current platform camera view, observing ${A().name}.`)];
+    if (brainView.ready) {
+      const size = brainView.renderer.getSize(new THREE.Vector2());
+      try {
+        brainView.renderer.setSize(900, 640, false);
+        brainView.update(0, A().brain.regionActivation(), A().brain);
+        const captureCamera = brainView.camera.clone();
+        captureCamera.aspect = 900 / 640;
+        captureCamera.position.sub(brainView.controls.target).multiplyScalar(1.18).add(brainView.controls.target);
+        captureCamera.updateProjectionMatrix();
+        brainView.renderer.render(brainView.scene, captureCamera);
+        images.push(canvasFigure(brainView.canvas, 'Brain atlas snapshot', `Allen CCFv3 anatomy with model activity for ${A().name} at the snapshot.`));
+      } finally {
+        brainView.renderer.setSize(size.x, size.y, false);
+      }
+    }
+    return images.filter(Boolean);
+  },
   causeLabel: (k) => (CAUSES[k] ? CAUSES[k].label : (k || 'unknown')),
 });
 
@@ -2364,7 +2395,6 @@ function updateHudInner() {
   if (bb) bb.classList.toggle('on', grid.isOpen());
   const rb = $('b-report');
   if (rb) rb.classList.toggle('on', report.isOpen());
-  if (report.isOpen() && (frameNo % 60) === 0) report.render();
   followBox();
   grid.render();
 

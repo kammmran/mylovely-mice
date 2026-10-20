@@ -41,6 +41,25 @@ as a floating window over the platform. **Clean view** restores default popup
 positions. Restarting a session asks for confirmation.
 The browser remembers your panel choices.
 
+### Build a report
+
+Open **Tools → Session report** (or press **Y**). The report captures the current
+session so you can review it without the data changing underneath you. Use
+**Refresh snapshot** to capture a newer state.
+
+**Report options** lets you name the report, choose its sections, and include all
+mice, the observed mouse, or specific mice in its tables and profiles. **Summary**,
+**Visual**, and **Complete** presets provide starting points. Your browser remembers
+these choices. Detailed profiles are optional because a large colony can produce
+a long document.
+
+**Download PDF** includes the selected platform and brain images, cage population
+and condition charts, regional activity, and recorded CA1 LFP, dopamine and learned
+value traces. Each figure labels its scope and units. Signals belong to the mouse
+observed when the snapshot was captured; colony comparisons cover all cages.
+**Markdown** and **Copy text** honor the section choices and describe the figures.
+**Mouse CSV** exports the selected mice as data. The journal retains up to 900 events.
+
 ### On GitHub Pages
 
 Live site: **https://kammmran.github.io/mylovely-mice/**
