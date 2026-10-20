@@ -199,7 +199,7 @@ export function mountFloatingPanels(platform) {
     top.querySelector('.panel-close')?.click();
     if (focused && !top.getClientRects().length) {
       const launcher = { boxes: 'b-boxes', colony: 'b-colony', mortality: 'b-mortality',
-        signals: 'b-signals', optics: 'b-optics', report: 'b-report' }[top.id];
+        signals: 'b-signals', optics: 'b-optics', report: 'b-report', anatomy: 'b-anatomy' }[top.id];
       const trigger = document.getElementById(launcher);
       (trigger?.getClientRects().length && !trigger.closest('[inert]') ? trigger
         : document.getElementById('b-mobile-menu')?.getClientRects().length ? document.getElementById('b-mobile-menu')

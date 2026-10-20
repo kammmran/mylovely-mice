@@ -12,6 +12,9 @@
  */
 import { chromium } from 'playwright';
 import { checkReport } from './report-smoke.mjs';
+import { checkMouseBehavior } from './behavior-smoke.mjs';
+import { checkThreatBehavior } from './threat-smoke.mjs';
+import { checkAnatomy } from './anatomy-smoke.mjs';
 
 const URL_BASE = process.env.URL || 'http://localhost:8777';
 const browser = await chromium.launch({
@@ -89,6 +92,9 @@ if (fail.length || errors.length) {
   process.exit(1);
 }
 console.log('The simulation runs with a clean platform and right sidebar');
+await checkMouseBehavior(page);
+await checkThreatBehavior(page);
+await checkAnatomy(page);
 if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
 
 const currentMouse = await page.locator('#ui-mouse').textContent();
@@ -216,6 +222,16 @@ if (await page.locator('#b-mobile-menu').getAttribute('aria-expanded') !== 'fals
 const cages = await page.locator('#boxes').boundingBox();
 if (!cages || cages.x !== 12 || cages.y !== 12 || cages.x + cages.width > mobileWorld.width) fail.push('Mobile cage panel is outside the platform corner');
 await page.locator('#boxes .panel-close').click();
+await page.click('#b-mobile-menu');
+await page.getByRole('tab', { name: 'Explore', exact: true }).click();
+await page.click('#b-anatomy');
+await page.waitForFunction(() => !!window.sim.anatomy.model);
+const mobileAnatomy = await page.locator('#anatomy').boundingBox();
+if (!mobileAnatomy || mobileAnatomy.x < 12 || mobileAnatomy.x + mobileAnatomy.width > mobileWorld.width - 11
+  || await page.locator('#b-mobile-menu').getAttribute('aria-expanded') !== 'false') {
+  fail.push('Mobile anatomy popup did not stay inside the platform with the drawer closed');
+}
+await page.locator('#anatomy .panel-close').click();
 for (const e of errors) fail.push(e);
 
 console.log(JSON.stringify({ ...state, pulse: `${before}  ->  ${later}` }, null, 1));

@@ -20,6 +20,8 @@ import { Threats, STIMULI, STIMULUS_ORDER, ODOUR_R } from './world/threats.js';
 import { mountMortality, CAUSES } from './world/mortality.js';
 import { ColonyGrid, PITCH } from './world/colonygrid.js';
 import { mountReport } from './report.js';
+import { MouseBehavior, steerMouse, separateMice } from './world/behavior.js';
+import { COATS } from './world/mouseappearance.js';
 import { canvasFigure } from './reportvisuals.js';
 import { BrainView } from './view/brainview.js';
 import { Raster, Trace, drawRateMap, drawPolar } from './view/plots.js';
@@ -27,6 +29,7 @@ import { mountSignals } from './view/signalspanel.js';
 import { SLOT } from './view/palette.js';
 import { mountInterface } from './view/interface.js';
 import { mountFloatingPanels } from './view/floatingpanels.js';
+import { mountAnatomy } from './view/anatomypanel.js';
 import { ROLES, ORDER, GROUPS } from './neuro/regions.js';
 
 const $ = (id) => document.getElementById(id);
@@ -35,8 +38,8 @@ const NO_DRIVE = Object.freeze({});
 
 const MAX_COLONY = 100;        // past this the cage is full and juveniles disperse
 /**
- * Only a handful of animals get the articulated rig: it is 64 meshes each, so a
- * hundred of them would be 6,400 draw calls. The rest share one instanced mesh.
+ * Nearby animals use the articulated body. The rest share instanced coat and
+ * facial-detail meshes in each cage.
  */
 const RIG_BUDGET = 6;
 const BRAIN_STRIDE = 3;        // animals you are not inspecting think at 20 Hz
@@ -94,7 +97,7 @@ const proxyScratch = [];
 // Each cage gets its own litter, its own instanced bodies and its own
 // aversive stimuli, because the conditions are what differ between them.
 for (const box of grid.boxes) {
-  box.herd = new ProxyHerd(box.group, 40);
+  box.herd = new ProxyHerd(box.group, MAX_COLONY);
   box.litter = new Litter(box.group, box.arena);
   box.threats = new Threats(box.group, box.arena);
   box.litter.onWean = (pup) => {
@@ -162,6 +165,7 @@ function makeAgent({ sex, name, x, z, heading, fur, belly, ageDays = 70, seed, b
   mouse.furColor = new THREE.Color(fur);
   return {
     brain, mouse, sex, name, fur, belly, box: home,
+    behavior: new MouseBehavior(),
     bornAt: 0, visited: new Set([home.cond.name]), crossings: 0,
     hasRig: false, phase: 0, accDt: 0, pend: {},
     auto: false,
@@ -183,8 +187,7 @@ function acquireRig(ag) {
     // (and with it sharp-wave ripples and mating bouts) is preserved
     if (typeof rig.setAutopilot === 'function') rig.setAutopilot(false);
   }
-  rig.mats.fur.color.set(ag.fur);
-  rig.mats.belly.color.set(ag.belly);
+  rig.setCoat(ag.fur, ag.belly);
   transferBody(ag.mouse, rig);
   // a pooled rig may have come from another cage: reparent, so that its
   // local coordinates land inside the cage this animal is actually in
@@ -217,7 +220,7 @@ function updateLOD() {
     ag,
     // a corpse never takes a rig back off a live animal: it has no gait to
     // show, and the instanced body is the one that knows how to lie on its side
-    d: ag.dead ? Infinity : (ag === A() ? -1 : Math.hypot(ag.mouse.x - cam.x, ag.mouse.z - cam.z)),
+    d: ag.dead ? Infinity : (ag === A() ? -1 : Math.hypot(worldX(ag, ag.mouse.x) - cam.x, worldZ(ag, ag.mouse.z) - cam.z)),
   })).sort((a, b) => a.d - b.d);
   const want = new Set(ranked.slice(0, RIG_BUDGET).map((r) => r.ag));
   for (const ag of agents) {
@@ -237,8 +240,9 @@ function matureInto(pup, box) {
   const sex = pup.sex || (Math.random() < 0.5 ? 'M' : 'F');
   nameCount[sex]++;
   const name = `${sex === 'M' ? 'male' : 'female'} ${nameCount[sex]}`;
-  // offspring colouring sits between the parents', with a little variation
-  const base = sex === 'M' ? 0xa89d8e : 0xcfbfc4;
+  // Natural coat colors with a little variation between individuals.
+  const coat = COATS[(seedSeq + pup.id) % COATS.length];
+  const base = coat.fur;
   const jitter = (c, k) => {
     const col = new THREE.Color(c);
     col.offsetHSL((Math.random() - 0.5) * 0.04, (Math.random() - 0.5) * 0.1, (Math.random() - 0.5) * k);
@@ -247,7 +251,7 @@ function matureInto(pup, box) {
   const home = box || grid.boxes[4];
   const ag = makeAgent({
     sex, name, box: home, x: pup.x, z: pup.z, heading: Math.random() * Math.PI * 2,
-    fur: jitter(base, 0.07), belly: jitter(sex === 'M' ? 0xe4ded5 : 0xf2ebe8, 0.05),
+    fur: jitter(base, 0.07), belly: jitter(coat.belly, 0.05),
     ageDays: WEAN_DAY, seed: ++seedSeq,
   });
   ag.auto = true;
@@ -276,8 +280,8 @@ function stockCages() {
         sex, box,
         name: `${sex === 'M' ? 'male' : 'female'} ${nameCount[sex]}`,
         x: Math.cos(a) * r, z: Math.sin(a) * r, heading: -a,
-        fur: sex === 'M' ? 0xa89d8e : 0xcfbfc4,
-        belly: sex === 'M' ? 0xe4ded5 : 0xf2ebe8,
+        fur: COATS[(box.id * 3 + i) % COATS.length].fur,
+        belly: COATS[(box.id * 3 + i) % COATS.length].belly,
         ageDays: 70, seed: ++seedSeq,
       });
       ag.auto = true;
@@ -309,6 +313,7 @@ function transferAgent(ag, cross) {
   ag.mouse.x = cross.at.x;
   ag.mouse.z = cross.at.z;
   ag.moveTarget = null;
+  ag.behavior.interrupt('explore');
   ag.wander = null;
   ag.roam = null;
   ag.roamT = 4 + Math.random() * 6;  // settle in before looking for the next one
@@ -811,13 +816,14 @@ function addIntruder() {
   const name = `intruder ${nameCount.M}`;
   const a = Math.random() * TAU;
   const ag = makeAgent({
-    sex: 'M', name,
+    sex: 'M', name, box: playerBox(),
     x: clamp(Math.cos(a) * 0.5, -0.5, 0.5), z: clamp(Math.sin(a) * 0.5, -0.5, 0.5),
     heading: a, fur: 0x8e8578, belly: 0xd8d2c6, ageDays: 70, seed: ++seedSeq,
   });
   ag.auto = true;
   ag.phase = agents.length % BRAIN_STRIDE;
   agents.push(ag);
+  ag.box.agents.push(ag);
   buildColonyCards();
   logEvent('state', `an <b>unfamiliar male</b> was put in the cage — the resident has about a minute to decide what he is`);
   return ag;
@@ -834,6 +840,7 @@ if (tgrid) {
     const st = STIMULI[key];
     const b = document.createElement('button');
     b.className = 'tbtn';
+    b.dataset.stimulus = key; b.setAttribute('aria-pressed', 'false');
     b.innerHTML = `<span class="ic">${st.icon}</span><span class="tl">${st.label}</span><kbd>${st.key}</kbd>`;
     b.title = `${st.blurb}\n\n${st.detail}\n\n${st.ref}`;
     b.onclick = () => presentThreat(key);
@@ -855,9 +862,8 @@ function presentThreat(key) {
 }
 
 function clearThreatSource() {
-  if (!threats.odour) return;
-  threats.clearOdour();
-  logEvent('sensory', 'the odour source was taken away');
+  threats.clear();
+  logEvent('sensory', 'stimuli removed — the mice recover at their own pace');
 }
 
 function toggleThreatSound() {
@@ -868,6 +874,15 @@ function toggleThreatSound() {
 
 if ($('b-thr-clear')) $('b-thr-clear').onclick = clearThreatSource;
 if ($('b-thr-mute')) $('b-thr-mute').onclick = toggleThreatSound;
+if ($('b-thr-view')) $('b-thr-view').onclick = () => {
+  cycleCamera('orbit');
+  const box = playerBox();
+  controls.target.set(box.origin.x + .12, .12, box.origin.z + .04);
+  const distance = Math.max(2.4, 1.8 / (2 * Math.tan(camera.fov * Math.PI / 360) * camera.aspect));
+  controls.maxDistance = Math.max(3.2, distance * 1.1);
+  camera.position.copy(controls.target).add(new THREE.Vector3(.6, .8, 1).normalize().multiplyScalar(distance));
+  controls.update();
+};
 
 /**
  * How strongly a point is contaminated for this animal, 0..1. Used to steer
@@ -936,7 +951,9 @@ function watchEvents(dt) {
           + `<b>${bb.byKey.pag.smooth.toFixed(0)} Hz</b>, and the hippocampus dropped from theta to the `
           + `<b>${bb.thetaFreq.toFixed(1)} Hz</b> breathing rhythm of a frightened mouse`);
       } else if (d === 'FLEEING') {
-        logEvent('state', `<b>${g.name}</b> bolted — superior colliculus to dorsal <b>PAG</b>, about a quarter of a second from stimulus to run`);
+        logEvent('state', `<b>${g.name}</b> bolted${bb.escapeTarget ? ' toward its remembered refuge' : ' away from danger'}`);
+      } else if (d === 'HIDING') {
+        logEvent('state', `<b>${g.name}</b> reached cover and is waiting for the threat to pass`);
       } else if (d === 'WARY') {
         logEvent('state', `<b>${g.name}</b> is wary — keeping to the walls, and not interested in food`);
       } else if (d === 'RISK ASSESSMENT') {
@@ -1121,6 +1138,10 @@ function toggleDrive(k) {
 }
 for (const k of Object.keys(DRIVE_BTN)) $(DRIVE_BTN[k]).onclick = () => toggleDrive(k);
 
+const anatomy = mountAnatomy({ getAgent: A, getPaused: () => paused,
+  ensureRig: (ag) => { if (!ag.dead && !ag.hasRig) acquireRig(ag); } });
+$('b-anatomy').onclick = () => anatomy.open(!anatomy.isOpen());
+
 // ----------------------------------------------------------------- panels
 /** Every panel can be shown or hidden, and the layout closes up around it. */
 const PANELS = [
@@ -1247,6 +1268,7 @@ function restoreCleanView() {
   signals?.open(false);
   optics.open?.(false);
   toggleReport(false);
+  anatomy.open(false);
   syncSignalsBtn();
   $('stats-card').open = false;
   applyPanels();
@@ -1317,6 +1339,7 @@ function toggleTrail() {
 }
 /** set the autopilot on one animal and keep the button honest about it */
 function setAuto(ag, on) {
+  ag.behavior?.interrupt(on ? 'explore' : 'manual');
   ag.auto = !!on;
   if (ag === agents[player]) {
     const b = $('b-auto');
@@ -1426,72 +1449,58 @@ $('b-auto').onclick = toggleAuto;
  */
 /** point `ag` at a spot and fill `out` with the commands to get there */
 function steerTo(ag, goal, out, urgency = 0.5) {
-  const m = ag.mouse;
-  const dx = goal.x - m.x, dz = goal.z - m.z;
-  const dist = Math.hypot(dx, dz);
-  const err = angDiff(Math.atan2(dx, dz), m.heading);
-  out.turn = clamp(-err * 2.4, -1, 1);
-  out.throttle = dist < 0.045 ? 0 : clamp(1 - Math.abs(err) * 0.45, 0.15, 1);
-  out.run = urgency > 0.62 && dist > 0.25 && Math.abs(err) < 0.6;
-  out.sniff = dist < 0.09;
-  return dist;
+  return steerMouse(ag, goal, out, urgency);
 }
 
 function driveAuto(ag, dt, out) {
+  Object.assign(out, { throttle: 0, turn: 0, run: false, sniff: false, rear: false, groom: false, rest: false });
   const b = ag.brain, m = ag.mouse;
   // this animal's own cage, shadowing the module-level "cage you are looking
   // at" aliases, so everything below reads the conditions it is actually in
   const arena = ag.box.arena, litter = ag.box.litter;
   const mate = other(agents.indexOf(ag));
-  let goal = null, urgency = 0.45, sniff = false;
+  let goal = null, urgency = 0.45;
 
   // ---- defence outranks every other motive ----
-  if (b.freeze > 0.45) {
-    out.throttle = 0; out.turn = 0; out.run = false; out.sniff = false;
+  if (b.mode === 'hide' || b.freeze > .45 && b.mode !== 'flight') {
+    ag.behavior.interrupt(b.mode === 'hide' ? 'hide' : 'freeze');
     return out;
   }
-  if (b.flight > 0.3) {
-    // Away from the source if there is one to be away from; out of the open
-    // middle if the threat came from overhead. Mice run to shelter when they
-    // have one, and to a wall when they do not (Yilmaz & Meister 2013).
+  if (b.flight > .3) {
+    ag.behavior.interrupt('flee');
     const src = b.threatSource;
     const away = src ? Math.atan2(m.x - src.x, m.z - src.z) : Math.atan2(m.x, m.z);
-    const shelter = (litter.nest && b.pupCount > 0) ? litter.nest : null;
-    const run = shelter || {
-      x: clamp(m.x + Math.sin(away) * 0.8, -0.54, 0.54),
-      z: clamp(m.z + Math.cos(away) * 0.8, -0.54, 0.54),
+    const run = b.escapeTarget || {
+      x: clamp(m.x + Math.sin(away) * .8, -arena.half + .055, arena.half - .055),
+      z: clamp(m.z + Math.cos(away) * .8, -arena.half + .055, arena.half - .055),
     };
     steerTo(ag, run, out, 1);
-    out.run = true;
-    out.sniff = false;
+    out.run = true; out.sniff = false;
     return out;
   }
-  if (b.risk > 0.3 && b.threatSource) {
-    // Risk assessment: hold station at a distance from the source, body
-    // stretched out towards it, sampling the air. The mouse neither leaves nor
-    // approaches — this is the behaviour predator odour mostly produces.
-    const src = b.threatSource;
-    const d = Math.max(0.02, Math.hypot(m.x - src.x, m.z - src.z));
-    const standoff = 0.3 + 0.18 * b.fear;
-    const ux = (m.x - src.x) / d, uz = (m.z - src.z) / d;
-    const post = {
-      x: clamp(src.x + ux * standoff, -0.54, 0.54),
-      z: clamp(src.z + uz * standoff, -0.54, 0.54),
-    };
-    const left = steerTo(ag, post, out, 0.35);
-    out.throttle *= 0.45;
-    out.sniff = true;
-    if (left < 0.07) {
-      // in position: face it and sniff
-      out.throttle = 0;
-      out.turn = clamp(-angDiff(Math.atan2(src.x - m.x, src.z - m.z), m.heading) * 1.8, -1, 1);
+  if (b.risk > .3 && b.threatSource) {
+    const src = b.threatSource, d = Math.max(.02, Math.hypot(m.x - src.x, m.z - src.z));
+    const standoff = .28 + .2 * b.fear;
+    if (d < standoff || sessionT < (ag.assessUntil || 0) || sessionT > (ag.nextAssessT || 0)) {
+      if (sessionT > (ag.nextAssessT || 0)) {
+        ag.assessUntil = sessionT + .7 + ag.behavior.boldness * .7;
+        ag.nextAssessT = sessionT + 2.5 + ag.behavior.boldness * 2;
+      }
+      ag.behavior.interrupt('risk assessment');
+      if (d < standoff - .025) {
+        const post = { x: clamp(src.x + (m.x - src.x) / d * standoff, -.54, .54),
+          z: clamp(src.z + (m.z - src.z) / d * standoff, -.54, .54) };
+        steerTo(ag, post, out, .35); out.throttle *= .65;
+      } else {
+        out.turn = clamp(-angDiff(Math.atan2(src.x - m.x, src.z - m.z), m.heading) * 1.8, -1, 1);
+      }
+      out.sniff = true; out.rear = false;
+      return out;
     }
-    return out;
   }
 
   const wantDrink = b.drives.drink ? b.thirst : 0;
   const wantEat = b.drives.eat ? b.hunger : 0;
-  const wantMate = b.mateDrive;
 
   // being attacked, or attacking, overrides every other motive
   const od = ag.opto || NO_DRIVE;
@@ -1552,77 +1561,30 @@ function driveAuto(ag, dt, out) {
     }
   }
 
-  // ---- a tunnel it has not been through is the most interesting thing in
-  // the cage. Mice explore novel space hard, and that — not hunger — is what
-  // actually redistributes a connected colony.
-  if (!goal && grid.open && wantEat < 0.85 && wantDrink < 0.85 && b.fear < 0.4) {
-    ag.roamT = (ag.roamT || 0) - dt;
-    if (ag.roamT <= 0 || !ag.roam) {
-      const mouth = grid.nearestMouth(ag.box, m.x, m.z,
-        // a cage it has no map of yet wins; otherwise any of them, sometimes
-        (far) => !b.envs[far.id] || Math.random() < 0.45);
-      ag.roam = mouth ? mouth.mouth : null;
-      ag.roamT = mouth ? 14 : 6;
-    }
-    if (ag.roam) { goal = ag.roam; urgency = 0.55; }
-  }
-
   if (goal) {
-    /* a pup takes precedence */
-  } else if (wantDrink > 0.5 && wantDrink >= wantEat && arena.dish) {
-    goal = { x: arena.dish.x, z: arena.dish.z };
-    urgency = wantDrink;
-  } else if (wantEat > 0.3) {
-    let best = null, bd = 99;
-    for (const c of arena.cheeses) {
-      if (c.eaten) continue;
-      // cheese in a corner that smells of predator is worth less: the detour
-      // is the approach-avoidance conflict, in metres
-      const d = Math.hypot(c.x - m.x, c.z - m.z) + 1.6 * threatAt(b, c.x, c.z);
-      if (d < bd) { bd = d; best = c; }
-    }
-    if (best) { goal = best; urgency = wantEat; }
-  } else if (wantMate > 0.3 && mate && mate.brain.mateDrive > 0.15) {
-    goal = { x: mate.mouse.x, z: mate.mouse.z };
-    urgency = wantMate;
+    ag.behavior.interrupt('alert');
+    steerTo(ag, goal, out, urgency);
+    return out;
   }
 
-  if (!goal) {
-    ag.wanderT -= dt;
-    if (!ag.wander || ag.wanderT <= 0) {
-      // prefer the perimeter, more strongly when the lights are up
-      const edge = 0.42 + 0.14 * (1 - arena.lightLevel);
-      // with the tunnels open, some of that wandering goes through one —
-      // which is all it takes for the colony to redistribute itself
-      if (grid.open && Math.random() < 0.3) {
-        const mouth = grid.nearestMouth(ag.box, m.x, m.z);
-        if (mouth) {
-          ag.wander = { x: mouth.mouth.x, z: mouth.mouth.z };
-          ag.wanderT = 3 + Math.random() * 3;
-          goal = ag.wander;
-          return steerTo(ag, goal, out, 0.4), out;
-        }
-      }
-      let a = Math.random() * TAU;
-      ag.wander = { x: clamp(Math.cos(a) * edge * 1.25, -0.52, 0.52), z: clamp(Math.sin(a) * edge * 1.25, -0.52, 0.52) };
-      // never wander into the contaminated corner: try a few other directions
-      for (let k = 0; k < 6 && threatAt(b, ag.wander.x, ag.wander.z) > 0.12; k++) {
-        a = Math.random() * TAU;
-        ag.wander = { x: clamp(Math.cos(a) * edge * 1.25, -0.52, 0.52), z: clamp(Math.sin(a) * edge * 1.25, -0.52, 0.52) };
-      }
-      // thigmotaxis: a frightened mouse keeps its flank against a wall
-      if (b.fear > 0.2) {
-        ag.wander.x = clamp(ag.wander.x * (1 + 0.4 * b.fear), -0.54, 0.54);
-        ag.wander.z = clamp(ag.wander.z * (1 + 0.4 * b.fear), -0.54, 0.54);
-      }
-      ag.wanderT = 2.5 + Math.random() * 3;
+  const plan = ag.behavior.choose(ag, { grid, mate,
+    threatAt: (x, z) => threatAt(b, x, z) });
+  if (plan.stationary) {
+    out.sniff = ['sniff', 'rear', 'investigate'].includes(plan.action);
+    out.rear = plan.action === 'rear';
+    out.groom = plan.action === 'groom';
+    out.rest = plan.action === 'rest';
+    if (plan.action === 'investigate' && plan.goal) {
+      out.turn = clamp(-angDiff(Math.atan2(plan.goal.x - m.x, plan.goal.z - m.z), m.heading), -1, 1);
     }
-    goal = ag.wander;
-    urgency = 0.35;
+    return out;
   }
-
-  const dist = steerTo(ag, goal, out, urgency);
-  if (dist < 0.045) ag.wander = null;
+  steerTo(ag, plan.goal, out, plan.urgency);
+  const stoppingDistance = plan.action === 'drink' ? (plan.goal.r || .075) + .035 : .065;
+  if (['eat', 'drink'].includes(plan.action) && Math.hypot(m.x - plan.goal.x, m.z - plan.goal.z) < stoppingDistance) {
+    out.throttle = 0; out.run = false; out.sniff = true;
+    out.turn = clamp(-angDiff(Math.atan2(plan.goal.x - m.x, plan.goal.z - m.z), m.heading) * 2, -1, 1);
+  }
   return out;
 }
 
@@ -1669,6 +1631,40 @@ worldCanvas.addEventListener('pointerup', (e) => {
       pup.mesh.scale.multiplyScalar(1.35);
       logEvent('state', `you lifted <b>pup ${pup.id}</b> — click anywhere to put it down`);
       return;
+    }
+  }
+  if (!heldPup) {
+    // Detailed bodies and instanced mice are both selectable. Anatomy opens
+    // before floor navigation, so clicking a mouse never sends it elsewhere.
+    const targets = [];
+    for (const box of grid.boxes) {
+      for (const ag of box.agents) if (ag.hasRig && !ag.dead) targets.push(ag.mouse.root);
+      if (box.herd.mesh.count) targets.push(box.herd.mesh, box.herd.details);
+    }
+    let selectedMouse = null;
+    for (const hit of clickRay.intersectObjects(targets, true)) {
+      if (hit.instanceId !== undefined) {
+        const box = grid.boxes.find((bx) => hit.object === bx.herd.mesh || hit.object === bx.herd.details);
+        selectedMouse = box?.agents.filter((ag) => !ag.hasRig)[hit.instanceId];
+      } else selectedMouse = agents.find((ag) => ag.hasRig && ag.mouse.root.getObjectById(hit.object.id));
+      if (selectedMouse && !selectedMouse.dead) break;
+      selectedMouse = null;
+    }
+    if (!selectedMouse) {
+      // Keep small mice usable at overview zoom, especially on touch screens.
+      const point = new THREE.Vector3(), radius = e.pointerType === 'touch' ? 16 : 9;
+      let nearest = radius;
+      for (const ag of agents) {
+        if (ag.dead) continue;
+        point.set(worldX(ag, ag.mouse.x), .02, worldZ(ag, ag.mouse.z)).project(camera);
+        if (point.z > 1 || point.z < -1) continue;
+        const gap = Math.hypot((point.x * .5 + .5) * r.width + r.left - e.clientX,
+          (-point.y * .5 + .5) * r.height + r.top - e.clientY);
+        if (gap < nearest) { nearest = gap; selectedMouse = ag; }
+      }
+    }
+    if (selectedMouse) {
+      takeControl(agents.indexOf(selectedMouse)); marker.visible = false; anatomy.open(true); return;
     }
   }
   if (!clickRay.ray.intersectPlane(groundPlane, hitPoint)) return;
@@ -1788,6 +1784,7 @@ function stepAgent(ag, i, dt) {
     if (typeof m.update === 'function') m.update(dt, { throttle: 0, turn: 0, run: false, sniff: false }, b);
     return null;
   }
+  ag.behavior.update(ag, dt);
   // Every animal is on autopilot unless you have taken the keys off it. The
   // one you are driving reads the keyboard, and touching a key is itself the
   // instruction to stop driving itself.
@@ -1799,7 +1796,10 @@ function stepAgent(ag, i, dt) {
       if (ag.auto) setAuto(ag, false);
     }
   }
-  if (ag.moveTarget) {
+  if (ag.auto && (b.flight > .3 || b.freeze > .45 || b.mode === 'hide')) {
+    ag.moveTarget = null;
+    cmd = driveAuto(ag, dt, autoCmd);
+  } else if (ag.moveTarget) {
     // a click sends it there whether or not the autopilot is on, and it picks
     // its own business back up when it arrives
     const left = steerTo(ag, ag.moveTarget, autoCmd, 0.5);
@@ -1814,17 +1814,18 @@ function stepAgent(ag, i, dt) {
   // a mating bout holds both animals still
   const inBout = mateBout > 0 && matePair.has(ag);
   const eff = inBout
-    ? { throttle: 0, turn: 0, run: false, sniff: true }
-    : { throttle: cmd.throttle, turn: cmd.turn, run: cmd.run, sniff: cmd.sniff };
+    ? { throttle: 0, turn: 0, run: false, sniff: true, rear: false, groom: false, rest: false }
+    : { throttle: cmd.throttle, turn: cmd.turn, run: cmd.run, sniff: cmd.sniff,
+      rear: cmd.rear ?? cmd.sniff, groom: !!cmd.groom, rest: !!cmd.rest };
   // wading through water is hard work
   eff.throttle *= 1 - 0.6 * arena.waterLevel;
   // optogenetically induced freezing stops the animal dead
   const od = ag.opto || NO_DRIVE;
-  if ((od.freeze || 0) > 0.5) { eff.throttle = 0; eff.turn = 0; }
+  if ((od.freeze || 0) > 0.5) { eff.throttle = 0; eff.turn = 0; eff.groom = eff.rear = eff.rest = false; }
   // Defence, from the brain's last update. A freezing mouse cannot be driven
   // with the keyboard either — that is what freezing is.
-  if (b.freeze > 0.45) { eff.throttle = 0; eff.turn *= 0.07; eff.sniff = false; }
-  else if (b.flight > 0.3) { eff.run = true; eff.sniff = false; }
+  if (b.flight > .3 && b.mode === 'flight') { eff.run = true; eff.sniff = eff.rear = eff.groom = eff.rest = false; }
+  else if (b.freeze > .45 || b.mode === 'hide') { eff.throttle = 0; eff.turn = 0; eff.sniff = false; eff.groom = eff.rear = eff.rest = false; }
   else if (b.risk > 0.3) { eff.throttle *= 0.5; eff.sniff = true; }
   if (od.locomotor) eff.throttle = clamp(eff.throttle + od.locomotor * 0.6, -1, 1);
   if (od.turnBias) eff.turn = clamp(eff.turn + od.turnBias, -1, 1);
@@ -1837,15 +1838,18 @@ function stepAgent(ag, i, dt) {
     if (cross) transferAgent(ag, cross);
   }
 
-  const nx = m.x + Math.sin(m.heading) * 0.032;
-  const nz = m.z + Math.cos(m.heading) * 0.032;
+  const noseReach = .050 * (m.root.scale.x || 1);
+  const nx = m.x + Math.sin(m.heading) * noseReach;
+  const nz = m.z + Math.cos(m.heading) * noseReach;
 
+  const safeToConsume = !b.drives.fear || (b.flight < .25 && b.freeze < .4 && b.fear < .35);
   // ---- eating ----
   let ate = null;
-  if (b.drives.eat) {
+  if (safeToConsume && b.drives.eat && (b.hunger > .18 || (od.feeding || 0) > .4)) {
     ate = arena.tryEat(nx, nz, 0.05);
     if (ate) {
       m.onEat();
+      ag.behavior.consume('eat', m);
       ag.eatCount++;
       ag.pendingEat = { t: sessionT, peak: 0 };   // report the burst once it has risen
     }
@@ -1863,13 +1867,14 @@ function stepAgent(ag, i, dt) {
   // ---- drinking ----
   const atWater = arena.atWater(nx, nz);
   let drank = false;
-  if (b.drives.drink && atWater && b.thirst > 0.06 && m.speed < 0.08) {
+  if (safeToConsume && b.drives.drink && atWater && b.thirst > 0.06 && m.speed < 0.08) {
     ag.drinkT += dt;
     if (ag.drinkT > 0.9) {
       ag.drinkT = 0; drank = true;
+      ag.behavior.consume('drink', m);
       logEvent('state', `<b>${ag.name}</b> drank — thirst neurons dropped to <b>${b.byKey.sfo.smooth.toFixed(0)} Hz</b>`);
     }
-  } else if (!atWater) {
+  } else if (!atWater || !safeToConsume) {
     ag.drinkT = 0;
   }
 
@@ -1959,7 +1964,10 @@ function stepAgent(ag, i, dt) {
   // animal has to move through. The onset of a stimulus and the startle
   // impulse are both shorter than one brain step for an animal thinking at
   // the reduced rate, so they are held the same way the other events are.
-  st.threat = threats.sense(m.x, m.z);
+  const refuge = arena.shelter;
+  const underCover = !!refuge && Math.abs(m.x - refuge.x) < .05 && Math.abs(m.z - refuge.z) < .065;
+  st.threat = ag.box.threats.sense(m.x, m.z, m.heading, underCover);
+  st.threat.shelterTarget = ag.behavior.memory(ag.box).shelter;
   // a mouse that can see its cagemate freeze catches the fear from it
   st.threat.socialFreeze = mate && pdist < 0.35 ? mate.brain.freeze : 0;
   if (st.threat.onset) ag.pend.threatOnset = st.threat.onset;
@@ -1990,7 +1998,7 @@ function stepAgent(ag, i, dt) {
   }
 
   // ---- behavioural state label ----
-  const vcm = m.speed * 100;
+  const vcm = Math.abs(m.speed) * 100;
   const odd = ag.opto || NO_DRIVE;
   let state = 'RESTING';
   const agg = Math.max(b.aggression || 0, odd.aggression || 0);
@@ -2003,10 +2011,16 @@ function stepAgent(ag, i, dt) {
   else if (inBout) state = 'MATING';
   else if (ag.carrying) state = 'CARRYING PUP';
   else if (ag.nursingNow) state = 'NURSING';
-  else if (b.eating > 0.35) state = 'EATING';
-  else if (b.drinking > 0.3) state = 'DRINKING';
+  else if ((b.eating > .35 || m.chew > .2) && Math.abs(m.speed) < .02) state = 'EATING';
+  else if (atWater && b.drinking > .3 && Math.abs(m.speed) < .06) state = 'DRINKING';
   else if (pdist < 0.1 && b.pheromone > 0.15) state = 'INVESTIGATING';
+  else if (m.groom > .3) state = 'GROOMING';
+  else if (m.rest > .3) state = 'RESTING';
   else if (m.rear > 0.4) state = 'REARING';
+  else if (ag.auto && ag.behavior.bout > 0 && ag.behavior.action === 'sniff') state = 'SNIFFING';
+  else if (ag.auto && vcm > 2 && ag.behavior.action === 'drink') state = 'SEEKING WATER';
+  else if (ag.auto && vcm > 2 && ag.behavior.action === 'eat') state = 'FORAGING';
+  else if (ag.auto && vcm > 2 && ag.behavior.action === 'return home') state = 'RETURNING TO SHELTER';
   else if (vcm > 16) state = arena.waterLevel > 0.55 ? 'SWIMMING' : 'RUNNING';
   else if (vcm > 2) state = arena.waterLevel > 0.55 ? 'WADING' : 'WALKING';
   else if (b.odor > 0.4) state = 'SNIFFING';
@@ -2118,6 +2132,7 @@ function stepWorld(dt) {
   mortality.step(dt);
   stepBirth(dt);
   for (let i = 0; i < agents.length; i++) stepAgent(agents[i], i, dt);
+  for (const box of grid.boxes) separateMice(box);
   const pbox = playerBox();
   for (const bx of grid.boxes) {
     // each cage animates around whichever animal is in it
@@ -2161,6 +2176,7 @@ function frame(now) {
         // let the instanced bodies show the defensive state the rig would
         ag.mouse.freeze = ag.brain.freeze || 0;
         ag.mouse.fear = ag.brain.fear || 0;
+        ag.mouse.risk = ag.brain.risk || 0; ag.mouse.startle = ag.brain.startle || 0;
         ag.mouse.dead = !ag.brain.alive;
         proxyScratch.push(ag.mouse);
       }
@@ -2196,6 +2212,7 @@ function frame(now) {
   shadowAcc += dt;
   if (shadowAcc > 0.05) { shadowAcc = 0; renderer.shadowMap.needsUpdate = true; }
   renderer.render(scene, camera);
+  anatomy.update(dt);
 
   // ---- panels (always show the mouse you are driving) ----
   const brain = A().brain;
@@ -2363,9 +2380,19 @@ function updateHudInner() {
   const tstat = threats.status();
   const tsub = $('thr-sub');
   if (tsub) {
-    tsub.textContent = tstat.odour
+    tsub.textContent = tstat.predator?.label || (tstat.odour
       ? `${tstat.odour.label} · ${(tstat.odour.level * 100) | 0}%`
-      : (tstat.sound || '');
+      : (tstat.sound || ''));
+    for (const button of tgrid.querySelectorAll('[data-stimulus]')) {
+      const active = button.dataset.stimulus === tstat.predator?.key || button.dataset.stimulus === tstat.odour?.key
+        || STIMULI[button.dataset.stimulus]?.label === tstat.sound;
+      button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
+    }
+    $('b-thr-clear').disabled = !tstat.predator && !tstat.odour && !tstat.sound;
+    $('b-thr-view').disabled = !tstat.predator;
+    $('thr-context').textContent = brain.sheltered ? 'Under cover · waiting for danger to pass'
+      : brain.escapeTarget ? 'Refuge remembered · directed escape available'
+      : 'No refuge remembered · freezing or retreat may occur';
   }
   const tstate = $('thr-state');
   if (tstate) {
@@ -2448,6 +2475,7 @@ requestAnimationFrame(frame);
 
 window.sim = {
   agents, arena, litter, brainView, THREE, camera, scene, renderer, controls,
+  anatomy,
   get optics() { return optics; },
   get brain() { return A().brain; },
   get mouse() { return A().mouse; },

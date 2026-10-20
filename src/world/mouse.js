@@ -1,22 +1,8 @@
-/**
- * The mouse: body rig, locomotion, and the behaviours the brain model reads
- * (running, turning, whisking, sniffing, rearing, eating).
- *
- * Every dimension, joint limit and gait parameter used here is a published
- * measurement, defined with its units and citation in `mousedata.js` and
- * mirrored for non-browser use in `data/mouse_biometrics.json`. Nothing
- * physical is hardcoded in this file.
- *
- * The rig is fully articulated: a segmented spine that bends within measured
- * lumbar/thoracic range, three-segment hindlimbs (femur / tibia / pes) and
- * two-segment forelimbs solved with inverse kinematics against measured joint
- * ranges, a speed-dependent gait engine that walks, trots and gallops with the
- * right footfall order and duty factor, a no-slip stance so the paws never
- * skate, an asymmetric whisking waveform with the measured
- * protraction/retraction speed ratio, a hinged jaw, blinking eyelids,
- * independently twitching ears and a 14-bead tail.
- */
+/** Articulated mouse body. Locomotion uses the gait and joint parameters in
+ * mousedata.js; coat, face, ear and tail details are display geometry. */
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { furTexture, earGeometry, MouseTail, mouseTorsoGeometry, mouseMuzzleGeometry } from './mouseappearance.js';
 import { MORPH, ROM, GAITS, GAIT_V_MAX, WHISK, SNIFF, DEG } from './mousedata.js';
 
 const MAX_WALK = 0.17;        // m/s
@@ -26,7 +12,7 @@ const BODY_Y = 0.019;
 
 const FUR = 0xb6ada1;
 const BELLY = 0xe4ded5;
-const SKIN = 0xe2a0a6;
+const SKIN = 0xcba7a1;
 
 const TAU = Math.PI * 2;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -98,6 +84,7 @@ export class Mouse {
     this.bumped = false;
     this.eatAnim = 0;
     this.chew = 0;
+    this.foodT = 0;
     this.whiskPhase = 0;
     this.stridePhase = 0;
     this.prevStride = 0;
@@ -106,7 +93,7 @@ export class Mouse {
     this.gaitName = 'walk';
     this.earTwitch = 0; this.nextTwitch = 2;
     this.blink = 0; this.nextBlink = 1.5;
-    this.groom = 0;
+    this.groom = 0; this.rest = 0;
     this.cmd = { throttle: 0, turn: 0, sniff: 0 };
 
     // Behavioural drives pushed in from outside — an optogenetics rig, or
@@ -138,11 +125,13 @@ export class Mouse {
     this.root = g;
     scene.add(g);
 
-    const fur = new THREE.MeshStandardMaterial({ color: FUR, roughness: 0.78, metalness: 0 });
+    const coat = furTexture();
+    const fur = new THREE.MeshStandardMaterial({ color: FUR, map: coat, bumpMap: coat, bumpScale: .00018, roughness: .96, metalness: 0 });
     const belly = new THREE.MeshStandardMaterial({ color: BELLY, roughness: 0.82 });
-    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: 0.6 });
+    const skin = new THREE.MeshStandardMaterial({ color: SKIN, roughness: .86, side: THREE.DoubleSide });
     const dark = new THREE.MeshStandardMaterial({ color: 0x0c0c10, roughness: 0.25, metalness: 0.1 });
     this.mats = { fur, belly, skin, dark };
+    this.mats.earFur = fur.clone(); this.mats.earFur.side = THREE.DoubleSide;
 
     // ---------------- body ----------------
     // body -> chest + pelvis, so the spine can bend and the gait can
@@ -158,48 +147,34 @@ export class Mouse {
     this.pelvis.position.set(0, 0, -0.016);
     this.body.add(this.pelvis);
 
-    const torso = new THREE.Mesh(new THREE.SphereGeometry(0.019, 22, 16), fur);
-    torso.scale.set(1.0, 0.92, 1.5);        // elongated along +z
-    torso.position.set(0, 0, 0.004);
+    this.mats.coat = fur.clone();
+    this.mats.coat.color.set(0xffffff); this.mats.coat.vertexColors = true;
+    const torso = new THREE.Mesh(mouseTorsoGeometry(), this.mats.coat);
     torso.castShadow = true;
     this.chest.add(torso);
     this.torso = torso;
 
-    const hb = new THREE.Mesh(new THREE.SphereGeometry(0.0185, 18, 14), belly);
-    hb.scale.set(0.9, 0.5, 1.35);
-    hb.position.set(0, -0.009, 0.004);
-    this.chest.add(hb);
-    this.bellyMesh = hb;
-
-    const rump = new THREE.Mesh(new THREE.SphereGeometry(0.0175, 18, 14), fur);
-    rump.scale.set(1, 0.95, 1.25);
-    rump.position.set(0, 0.001, -0.008);
-    rump.castShadow = true;
-    this.pelvis.add(rump);
-    this.rump = rump;
-
     // ---------------- head ----------------
     this.neck = new THREE.Group();
-    this.neck.position.set(0, 0.006, 0.022);
+    this.neck.position.set(0, .004, .027);
     this.chest.add(this.neck);
 
     this.head = new THREE.Group();
     this.head.position.set(0, 0.001, 0.002);
     this.neck.add(this.head);
 
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.0135, 20, 16), fur);
-    skull.scale.set(0.95, 0.9, 1.15);
+    const skull = new THREE.Mesh(new THREE.SphereGeometry(.0122, 24, 18), fur);
+    skull.scale.set(.85, .82, 1.05);
     skull.castShadow = true;
     this.head.add(skull);
 
-    const snout = new THREE.Mesh(new THREE.ConeGeometry(0.0092, 0.019, 16), fur);
-    snout.rotation.x = Math.PI / 2;
-    snout.position.set(0, -0.0024, 0.0165);
+    const snout = new THREE.Mesh(mouseMuzzleGeometry(), fur);
+    snout.position.set(0, -.0023, .005);
     snout.castShadow = true;
     this.head.add(snout);
 
-    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.0026, 12, 10), skin);
-    nose.position.set(0, -0.0018, 0.0255);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(.0015, 16, 12), skin);
+    nose.position.set(0, -.002, .0235);
     this.head.add(nose);
     this.nose = nose;
 
@@ -207,35 +182,40 @@ export class Mouse {
     this.jaw = new THREE.Group();
     this.jaw.position.set(0, -0.004, 0.004);
     this.head.add(this.jaw);
-    const jawMesh = new THREE.Mesh(new THREE.ConeGeometry(0.0072, 0.016, 12), fur);
-    jawMesh.rotation.x = Math.PI / 2;
-    jawMesh.scale.set(1, 1, 0.55);
+    const jawMesh = new THREE.Mesh(new THREE.SphereGeometry(.0065, 16, 10), fur);
+    jawMesh.scale.set(1, .4, 1.4);
     jawMesh.position.set(0, -0.0015, 0.0095);
     this.jaw.add(jawMesh);
     const incisors = new THREE.Mesh(
-      new THREE.BoxGeometry(0.0034, 0.0022, 0.0012),
+      new THREE.BoxGeometry(.0016, .0013, .0006),
       new THREE.MeshStandardMaterial({ color: 0xfff6e0, roughness: 0.35 }),
     );
     incisors.position.set(0, 0.0012, 0.0182);
     this.jaw.add(incisors);
+    this.incisors = incisors;
+    this.foodCrumb = new THREE.Mesh(new THREE.SphereGeometry(.0022, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xd7bc7c, roughness: .94 }));
+    this.foodCrumb.position.set(0, -.002, .021);
+    this.foodCrumb.visible = false;
+    this.jaw.add(this.foodCrumb);
 
     // eyes, each with a lid that rotates down over it
     this.eyelids = [];
     for (const sx of [-1, 1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.0032, 14, 12), dark);
-      eye.position.set(sx * 0.0082, 0.0028, 0.0078);
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(.0019, 18, 14), dark);
+      eye.position.set(sx * .0087, .0023, .0075);
       this.head.add(eye);
       const glint = new THREE.Mesh(
-        new THREE.SphereGeometry(0.0011, 8, 6),
+        new THREE.SphereGeometry(.0004, 8, 6),
         new THREE.MeshBasicMaterial({ color: 0xffffff }),
       );
-      glint.position.set(sx * 0.0094, 0.0043, 0.0094);
+      glint.position.set(sx * .0097, .0033, .0087);
       this.head.add(glint);
 
       const lidPivot = new THREE.Group();
       lidPivot.position.copy(eye.position);
       const lid = new THREE.Mesh(
-        new THREE.SphereGeometry(0.0035, 12, 8, 0, TAU, 0, Math.PI / 2),
+        new THREE.SphereGeometry(.0021, 16, 10, 0, TAU, 0, Math.PI / 2),
         fur,
       );
       lidPivot.add(lid);
@@ -248,17 +228,12 @@ export class Mouse {
     this.ears = [];
     for (const sx of [-1, 1]) {
       const ear = new THREE.Group();
-      ear.position.set(sx * 0.0105, 0.0098, -0.0018);
-      const outer = new THREE.Mesh(new THREE.SphereGeometry(0.0082, 16, 12, 0, TAU, 0, Math.PI / 2), fur);
-      outer.rotation.set(Math.PI / 2.1, 0, sx * -0.35);
-      outer.scale.set(1, 0.42, 1);
-      outer.castShadow = true;
-      ear.add(outer);
-      const inner = new THREE.Mesh(new THREE.SphereGeometry(0.0062, 14, 10, 0, TAU, 0, Math.PI / 2), skin);
-      inner.rotation.set(Math.PI / 2.1, 0, sx * -0.35);
-      inner.scale.set(1, 0.4, 1);
-      inner.position.set(sx * 0.0008, 0.0012, 0.0012);
-      ear.add(inner);
+      ear.position.set(sx * .010, .0105, -.0045);
+      const outer = new THREE.Mesh(earGeometry(.0078), fur);
+      outer.material = this.mats.earFur;
+      outer.castShadow = true; ear.add(outer);
+      const inner = new THREE.Mesh(earGeometry(.0060), skin);
+      inner.position.set(0, .0004, .0005); ear.add(inner);
       ear.userData = { side: sx, twitch: 0, next: 1 + Math.random() * 3 };
       this.head.add(ear);
       this.ears.push(ear);
@@ -268,7 +243,7 @@ export class Mouse {
     this.whiskerGroup = new THREE.Group();
     this.whiskerGroup.position.set(0, -0.0015, 0.0205);
     this.head.add(this.whiskerGroup);
-    const wmat = new THREE.LineBasicMaterial({ color: 0xdfe6ee, transparent: true, opacity: 0.55 });
+    const wmat = new THREE.LineBasicMaterial({ color: 0xd4cfc4, transparent: true, opacity: .58 });
     this.whiskerMat = wmat;
     this.whiskers = [];
     this.whiskerPads = [];
@@ -276,15 +251,17 @@ export class Mouse {
       const pad = new THREE.Group();
       this.whiskerGroup.add(pad);
       pad.userData = { side: sx };
-      for (let i = 0; i < 4; i++) {
-        const len = 0.019 + i * 0.0035;
-        const up = (i - 1.4) * 0.0032;
-        const spread = 0.35 + i * 0.22;
-        const geo = new THREE.BufferGeometry().setFromPoints([
+      pad.position.x = sx * .0038;
+      for (let i = 0; i < 6; i++) {
+        const len = .022 + i * .0028;
+        const up = (i - 2.5) * .0017;
+        const spread = .55 + i * .23;
+        const curve = new THREE.QuadraticBezierCurve3(
           new THREE.Vector3(0, 0, 0),
-          new THREE.Vector3(sx * len * Math.sin(spread) * 0.55, up * 0.6, len * 0.75),
-          new THREE.Vector3(sx * len * Math.sin(spread), up, len * Math.cos(spread) * 0.9),
-        ]);
+          new THREE.Vector3(sx * len * .55, up * .4, .006 + len * .22),
+          new THREE.Vector3(sx * len * Math.sin(spread), up, len * Math.cos(spread) * .45),
+        );
+        const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(12));
         const w = new THREE.Line(geo, wmat);
         w.userData = { side: sx, i };
         pad.add(w);
@@ -313,7 +290,7 @@ export class Mouse {
       hip.position.set(d.x, d.y, d.z);
       (d.hind ? this.pelvis : this.chest).add(hip);
 
-      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(d.hind ? 0.0046 : 0.0038, L1 * 0.72, 6, 8), fur);
+      const upper = new THREE.Mesh(new THREE.CapsuleGeometry(d.hind ? .0038 : .0026, L1 * 0.72, 6, 8), fur);
       upper.position.y = -L1 / 2;
       upper.castShadow = true;
       hip.add(upper);
@@ -322,7 +299,7 @@ export class Mouse {
       knee.position.y = -L1;
       hip.add(knee);
 
-      const lower = new THREE.Mesh(new THREE.CapsuleGeometry(0.0031, L2 * 0.7, 6, 8), fur);
+      const lower = new THREE.Mesh(new THREE.CapsuleGeometry(.0020, L2 * 0.7, 6, 8), fur);
       lower.position.y = -L2 / 2;
       lower.castShadow = true;
       knee.add(lower);
@@ -336,35 +313,43 @@ export class Mouse {
       sole.scale.set(0.85, 0.45, d.hind ? (L3 / 0.0034) * 0.52 : 1.2);
       sole.position.z = d.hind ? L3 * 0.45 : 0.0008;
       paw.add(sole);
-      const toes = [];
-      for (let ti = -1; ti <= 1; ti++) {
-        const toe = new THREE.Mesh(new THREE.SphereGeometry(0.0012, 8, 6), skin);
-        toe.scale.set(0.8, 0.6, 1.5);
-        toe.position.set(ti * 0.0019, -0.0003, (d.hind ? L3 * 0.95 : 0.0036) - Math.abs(ti) * 0.0007);
-        paw.add(toe);
-        toes.push(toe);
+      const digits = [];
+      const count = d.hind ? 5 : 4;
+      for (let ti = 0; ti < count; ti++) {
+        const toe = new THREE.CapsuleGeometry(.00065, d.hind ? .0032 : .0024, 3, 6);
+        toe.rotateX(Math.PI / 2);
+        toe.translate((ti - (count - 1) / 2) * .00135, -.0003,
+          (d.hind ? L3 * .82 : .0036) - Math.abs(ti - (count - 1) / 2) * .0006);
+        digits.push(toe);
       }
+      const toeMesh = new THREE.Mesh(mergeGeometries(digits, false), skin);
+      paw.add(toeMesh);
+      const toes = [toeMesh];
+      digits.forEach((geometry) => geometry.dispose());
 
       const leg = { ...d, L1, L2, L3, hip, knee, paw, toes, contact: 0 };
       hip.userData = leg;
       this.legs.push(leg);
     }
 
-    // ---------------- tail ----------------
-    this.tail = [];
-    const tailMat = new THREE.MeshStandardMaterial({ color: 0xc9a9a2, roughness: 0.65 });
-    this.tailSegs = 14;
-    for (let i = 0; i < this.tailSegs; i++) {
-      const f = i / (this.tailSegs - 1);
-      const bead = new THREE.Mesh(new THREE.SphereGeometry(0.0042 * (1 - f * 0.78), 10, 8), tailMat);
-      bead.castShadow = i < 7;
-      this.pelvis.add(bead);
-      this.tail.push(bead);
-    }
+    this.tail = new MouseTail(this.pelvis);
 
     this.root.position.set(this.x, BODY_Y, this.z);
     this.root.rotation.y = this.heading;
     this._v = new THREE.Vector3();
+    this.setCoat(FUR, BELLY);
+  }
+
+  setCoat(fur, belly) {
+    this.mats.fur.color.set(fur); this.mats.earFur.color.set(fur); this.mats.belly.color.set(belly);
+    const positions = this.torso.geometry.getAttribute('position');
+    const colors = new Float32Array(positions.count * 3), color = new THREE.Color();
+    for (let i = 0; i < positions.count; i++) {
+      const blend = smooth(clamp((-positions.getY(i) - .005) / .007, 0, 1));
+      color.copy(this.mats.fur.color).lerp(this.mats.belly.color, blend);
+      color.toArray(colors, i * 3);
+    }
+    this.torso.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   }
 
   // -------------------------------------------------------------- autopilot
@@ -462,7 +447,9 @@ export class Mouse {
     this.cmd.sniff = input.sniff ? 1 : 0;
 
     // rearing up on the hind legs (and that slows it down)
-    this.rear += ((input.sniff ? 1 : 0) - this.rear) * Math.min(1, dt * 7);
+    this.rear += (((input.rear ?? input.sniff) ? 1 : 0) - this.rear) * Math.min(1, dt * 7);
+    this.groom += ((input.groom ? 1 : 0) - this.groom) * Math.min(1, dt * 7);
+    this.rest += ((input.rest ? 1 : 0) - this.rest) * Math.min(1, dt * 3);
     const rearBrake = 1 - 0.75 * this.rear;
 
     this.prevSpeed = this.speed;
@@ -496,6 +483,7 @@ export class Mouse {
     this.stridePhase = brain.stridePhase;
     this.eatAnim = Math.max(0, this.eatAnim - dt * 2.2);
     this.chew = Math.max(0, this.chew - dt * 0.75);
+    this.foodT = Math.max(0, this.foodT - dt);
 
     // ease toward the externally driven behavioural state
     for (const k in this.drive) {
@@ -521,6 +509,7 @@ export class Mouse {
     const sp = Math.abs(this.speed);
     const k = Math.min(1, sp / MAX_RUN);
     const walking = Math.min(1, sp / 0.05);
+    const chewing = Math.max(this.eatAnim, this.chew);
 
     this.root.position.set(this.x, BODY_Y, this.z);
     this.root.rotation.y = this.heading;
@@ -538,12 +527,14 @@ export class Mouse {
     const fear = clamp(this.drive.fear, 0, 1);
     const frozen = clamp(this.drive.freeze, 0, 1);
     const still = 1 - frozen;
+    const risk = clamp(brain.risk || 0, 0, 1) * (1 - walking);
+    const flinch = clamp(brain.startle || 0, 0, 1);
 
     // ---- trunk: bob, pitch, bank ----
     // vertical oscillation is at twice stride frequency in symmetrical gaits
     const bob = Math.sin(this.stridePhase * 2) * 0.0018 * walking * still;
-    this.body.position.y = bob + this.rear * 0.016 + agg * 0.0035 - fear * 0.0035;
-    this.body.rotation.x = -this.rear * 0.72 + k * 0.05 + fear * 0.1;
+    this.body.position.y = bob + this.rear * .016 + this.groom * .003 - this.rest * .004 + agg * .0035 - fear * .0035 + flinch * .004;
+    this.body.rotation.x = -this.rear * .72 - this.groom * .15 + k * .05 + fear * .1;
     this.body.rotation.z += ((this.angVel * 0.055) - this.body.rotation.z) * Math.min(1, dt * 8);
 
     // ---- spine: lateral bend into the turn plus gait twist, held inside the
@@ -568,9 +559,8 @@ export class Mouse {
     const breath = Math.sin(brain.sniffPhase * 0.5) * depth;
     // piloerection: the coat stands up during an aggressive or fearful bout
     const puff = 1 + 0.075 * agg + 0.04 * fear;
-    this.torso.scale.set((1 + breath) * puff, (0.92 + breath * 0.8) * puff, 1.5);
-    this.bellyMesh.scale.set(0.9 + breath * 1.2, 0.5 + breath, 1.35);
-    this.rump.scale.set((1 + breath * 0.5) * puff, (0.95 + breath * 0.4) * puff, 1.25);
+    this.torso.scale.set((1 + breath) * puff * (1 - risk * .05),
+      (1 + breath * .8) * puff * (1 - risk * .12), 1 + risk * .12);
 
     // ---- legs ----
     // Stance follows a no-slip rule: the paw is pinned to the ground and
@@ -604,13 +594,13 @@ export class Mouse {
       }
       fz += leg.hind ? -0.001 : 0.002;                  // resting stance offset
 
-      // rearing lifts the forelimbs off the floor and tucks them to the chest
-      if (!leg.hind && this.rear > 0.02) {
-        const groomy = Math.sin(brain.t * 9 + leg.x * 90) * 0.0022 * this.rear;
-        fz = fz * (1 - this.rear) + (0.009 + groomy) * this.rear;
-        fy = fy * (1 - this.rear) + (-0.004 + groomy * 0.6) * this.rear;
-        leg.contact *= 1 - this.rear;
-        footPitch *= 1 - this.rear;
+      // Forepaws wash the face in alternating strokes or hold food near the jaw.
+      const hands = Math.max(this.rear, this.groom, clamp(chewing * .5, 0, 1) * (1 - walking));
+      if (!leg.hind && hands > .02) {
+        const stroke = Math.sin(brain.t * 11 + (leg.x < 0 ? 0 : .7)) * .004 * this.groom;
+        fz = fz * (1 - hands) + (.014 + stroke) * hands;
+        fy = fy * (1 - hands) + (-.001 + stroke * .8) * hands;
+        leg.contact *= 1 - hands; footPitch *= 1 - hands;
       }
 
       const sol = ik2(leg.L1, leg.L2, fz, fy, leg.hind);
@@ -626,29 +616,10 @@ export class Mouse {
       leg.paw.rotation.x = clamp(sol.paw - footPitch, ankleLim[0] - 0.6, ankleLim[1] + 0.6);
       // toes splay on contact and curl in the air
       const splay = 1 + 0.35 * leg.contact - 0.2 * (1 - leg.contact);
-      for (const t of leg.toes) t.scale.set(0.8 * splay, 0.6, 1.5);
+      for (const t of leg.toes) t.scale.set(splay, 1, 1);
     }
 
-    // ---- tail: travelling wave, each bead held inside the measured
-    // per-segment bending range [2] ----
-    // tail: lashes wide and fast in an attack bout, tucks in fear, stops in freeze
-    const lash = Math.sin(brain.t * 9.5) * agg * 0.014;
-    const amp = (0.004 + 0.009 * k + Math.abs(this.angVel) * 0.0045) * (1 + 2.1 * agg) * still;
-    let prevLat = 0;
-    for (let i = 0; i < this.tailSegs; i++) {
-      const f = i / (this.tailSegs - 1);
-      const along = -0.022 - f * MORPH.tailLen * 0.9;
-      const segLen = MORPH.tailLen * 0.9 / this.tailSegs;
-      let lat = (Math.sin(this.stridePhase * 0.9 - f * 2.6) * amp + lash * f) * (0.25 + f);
-      // limit the bend between consecutive beads to ROM.tailSeg
-      const maxStep = Math.tan(ROM.tailSeg) * segLen * 2.2;
-      lat = prevLat + clamp(lat - prevLat, -maxStep, maxStep);
-      prevLat = lat;
-      const up = 0.002 + Math.sin(f * 2.1) * 0.004 + f * f * 0.006 * (1 + k)
-        + this.rear * f * 0.02 + agg * f * 0.012 - fear * f * 0.01;
-      this.tail[i].position.set(lat, up, along);
-      this.tail[i].rotation.z = clamp(lat * 12, -ROM.tailSeg * 3, ROM.tailSeg * 3);
-    }
+    this.tail.update(this.stridePhase + brain.t * .35, k, this.angVel, agg, fear, this.rear, frozen);
 
     // ---- neck and head, inside the cervical and head ranges [2] ----
     const sniffing = this.cmd.sniff ? 1 : 0;
@@ -657,21 +628,22 @@ export class Mouse {
     const hy = clamp(-this.cmd.turn * 0.28, -ROM.head * 0.6, ROM.head * 0.6);
     this.head.rotation.y += (hy - this.head.rotation.y) * Math.min(1, dt * 9);
     this.head.rotation.z += ((this.cmd.turn * 0.12) - this.head.rotation.z) * Math.min(1, dt * 7);
-    const dip = sniffing ? -0.12 : (0.3 - 0.32 * walking);
+    const dip = sniffing ? (this.rear > .3 ? -.18 : .18) : (.10 - .18 * walking);
     const nod = Math.sin(brain.sniffPhase) * (0.03 + 0.05 * sniffing) + Math.sin(this.stridePhase) * 0.015 * walking;
     const headWant = clamp(
-      dip * 0.5 + nod + this.eatAnim * 0.25 + agg * 0.26 + fear * 0.1, -ROM.head, ROM.head);
+      dip * .5 + nod + this.eatAnim * .25 + agg * .26 + fear * .1 + this.groom * .22 + this.rest * .2, -ROM.head, ROM.head);
     this.head.rotation.x += (headWant - this.head.rotation.x) * Math.min(1, dt * 10);
 
     // ---- jaw: small sniff-locked gape, fast chewing after a bite; opening is
     // capped at the measured 30 deg [2] ----
-    const chewing = Math.max(this.eatAnim, this.chew);
     const gape = clamp(
       0.04 + 0.05 * Math.max(0, Math.sin(brain.sniffPhase)) * sniffing
       + chewing * 0.42 * (0.5 + 0.5 * Math.sin(brain.t * 34)),
       0, ROM.jaw,
     );
     this.jaw.rotation.x += (gape - this.jaw.rotation.x) * Math.min(1, dt * 22);
+    this.incisors.visible = chewing > .2;
+    this.foodCrumb.visible = this.foodT > 0 && walking < .25;
 
     // ---- nose twitches with every sniff ----
     const ns = 1 + 0.22 * Math.max(0, Math.sin(brain.sniffPhase)) * (0.4 + 0.6 * sniffing);
@@ -681,7 +653,7 @@ export class Mouse {
     this.nextBlink -= dt;
     if (this.nextBlink <= 0) { this.blink = 1; this.nextBlink = 1.8 + Math.random() * 4.5; }
     this.blink = Math.max(0, this.blink - dt * 7);
-    const shut = Math.max(Math.sin(Math.PI * clamp(1 - this.blink, 0, 1)) * (this.blink > 0 ? 1 : 0), chewing * 0.45);
+    const shut = Math.max(Math.sin(Math.PI * clamp(1 - this.blink, 0, 1)) * (this.blink > 0 ? 1 : 0), chewing * .35, this.groom * .3, this.rest * .92);
     for (const lid of this.eyelids) {
       lid.rotation.x += ((-1.45 + 1.6 * shut) - lid.rotation.x) * Math.min(1, dt * 26);
     }
@@ -704,14 +676,14 @@ export class Mouse {
       ? -1 + 2 * smooth(p / Q)                     // slow protraction
       : 1 - 2 * smooth((p - Q) / (1 - Q));         // fast retraction
     this.whiskerGroup.rotation.y = s * half * 0.45 * still;
-    this.whiskerGroup.rotation.x = Math.cos(this.whiskPhase) * 0.1;
+    this.whiskerGroup.rotation.x = Math.cos(this.whiskPhase) * .1 * still;
     // the two pads sweep in antiphase, as they do during real whisking
     for (const pad of this.whiskerPads) {
       pad.rotation.y = pad.userData.side * s * half * still;
     }
     this.whiskerMat.opacity = 0.42 + 0.4 * contact;
     for (const w of this.whiskers) {
-      w.scale.setScalar(1 + 0.12 * Math.sin(this.whiskPhase + w.userData.i * 0.5));
+      w.scale.setScalar(1 + .12 * Math.sin(this.whiskPhase + w.userData.i * .5) * still);
     }
 
     // ---- ears: orient forward, each twitching on its own schedule ----
@@ -723,17 +695,17 @@ export class Mouse {
       ear.rotation.z = u.side * (0.08 + 0.25 * u.twitch * still * Math.sin(brain.t * 26) + 0.5 * agg);
       // ears flatten back against the skull in an aggressive or fearful bout
       ear.rotation.x = -0.12 * walking + u.twitch * 0.1 * still + (agg + fear) * 0.55;
-      ear.rotation.y = u.side * 0.1 * contact;
+      ear.rotation.y = u.side * (.65 + .1 * contact);
     }
   }
 
-  onEat() { this.eatAnim = 1; this.chew = 1.6; }
+  onEat() { this.eatAnim = 1; this.chew = 1.6; this.foodT = 1.4; }
 
   reset() {
     this.x = -0.35; this.z = -0.35;
     this.heading = Math.PI * 0.25;
     this.speed = 0; this.angVel = 0; this.accel = 0; this.rear = 0;
-    this.eatAnim = 0; this.chew = 0;
+    this.eatAnim = 0; this.chew = 0; this.foodT = 0; this.groom = 0; this.rest = 0;
     this.auto.engaged = false; this.auto.idle = 0;
     this.pickTarget();
   }

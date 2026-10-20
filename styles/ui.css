@@ -281,3 +281,9 @@ dialog::backdrop { background: #03080dba; backdrop-filter: blur(6px); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+.threat-help { margin: 0 0 9px; color: var(--ink3); font-size: 10px; line-height: 1.5; }
+#threats .tbtn.active { border-color: #c27d53; color: #f2d9bd; background: #392a22; }
+#threats .tbtn:disabled { cursor: default; opacity: .45; }
+#thr-context { margin: 0 0 8px; font-size: 9px; }
+#b-thr-view { width: 100%; justify-content: center; margin-top: 5px; }

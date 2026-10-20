@@ -210,7 +210,12 @@ export class Brain {
     this.predatorOdour = 0;    // predator smell at the nose, 0..1
     this.foulOdour = 0;        // merely unpleasant smell, 0..1
     this.vnoThreat = 0;        // the part of it the vomeronasal organ reads
-    this.looming = 0;          // something expanding overhead, 0..1
+    this.looming = 0;          // something approaching overhead, 0..1
+    this.visualThreat = 0;
+    this.sheltered = false;
+    this.escapeTarget = null;
+    this.threatMemoryT = 0;
+    this.defenseBias = .8 + (seed % 19) / 38;
     this.startle = 0;          // decaying whole-body startle transient
     this.fear = 0;             // defensive state; outlasts the stimulus
     this.freeze = 0;           // immobile except for breathing
@@ -244,6 +249,7 @@ export class Brain {
     this.threatDist = Infinity;
     this.threatBearing = 0;
     this.threatKind = null;
+    this.odourKind = null;
     this.freezePct = 0;        // running fraction of time spent frozen
     this.avoidT = 0;           // time since the source was put down
     this.avoidIn = 0;          // of which, time spent in its quadrant
@@ -1256,7 +1262,7 @@ export class Brain {
     const vmd = this.byKey.vmhdm;
     for (let i = 0; i < vmd.n; i++) {
       const c = vmd.cells[i];
-      vmd.rate[i] = c.base + this.defenseGain * c.gain * (18 * this.predatorOdour
+      vmd.rate[i] = c.base + this.defenseGain * c.gain * (18 * Math.max(this.predatorOdour, this.visualThreat)
                   + 15 * this.threatSound + 13 * this.looming + 7 * this.fear);
     }
     const pmv = this.byKey.pmv;
@@ -1344,6 +1350,8 @@ export class Brain {
     if (id === this.envId) return false;
     this.envs[this.envId] = this.captureEnv();
     this.envId = id;
+    this.threatSource = null; this.threatMemoryT = 0; this.escapeTarget = null;
+    this.mode = null; this.defenseT = 0;
     const seen = this.envs[id];
     if (seen) this.applyEnv(seen);        // the map it built here last time
     else this.applyEnv(this.freshEnv());  // a new cage: a new map
@@ -1488,72 +1496,78 @@ export class Brain {
     const th = s.threat || null;
     const dec = (v, tau) => v * Math.exp(-dt / tau);
 
-    const sound = th ? clamp(th.sound, 0, 1) : 0;
-    const pred = th ? clamp(th.predatorOdour, 0, 1) : 0;
-    const foul = th ? clamp(th.foulOdour, 0, 1) : 0;
-    const loom = th ? clamp(th.looming, 0, 1) : 0;
-    const socialFreeze = th ? clamp(th.socialFreeze || 0, 0, 1) : 0;
-    const onset = th ? th.onset : null;
-    const imminence = th ? clamp(th.imminence, 0, 1.4) : 0;
+    const sound = clamp(th?.sound || 0, 0, 1);
+    const predatorSound = th?.soundKind === 'burst' ? 0 : sound;
+    const pred = clamp(th?.predatorOdour || 0, 0, 1);
+    const foul = clamp(th?.foulOdour || 0, 0, 1);
+    const loom = clamp(th?.looming || 0, 0, 1);
+    const visual = clamp(th?.visual || 0, 0, 1);
+    const socialFreeze = clamp(th?.socialFreeze || 0, 0, 1);
+    const onset = th?.onset;
+    const imminence = clamp(th?.imminence || 0, 0, 1.4);
 
-    this.threatSound = sound;
-    this.threatSoundKind = th ? th.soundKind : null;
-    this.predatorOdour = pred;
-    this.foulOdour = foul;
-    this.vnoThreat = th ? clamp(th.vno, 0, 1) : 0;
-    this.looming = loom;
-    this.threatSource = th ? th.source : null;
-    this.threatDist = th ? th.sourceDist : Infinity;
-    this.threatBearing = th ? th.sourceBearing : 0;
-    this.startle = Math.max(dec(this.startle, 0.12), th ? th.startle : 0);
+    this.threatSound = predatorSound;
+    this.threatSoundKind = th?.soundKind || null;
+    this.predatorOdour = pred; this.foulOdour = foul;
+    this.vnoThreat = clamp(th?.vno || 0, 0, 1);
+    this.looming = loom; this.visualThreat = visual;
+    this.startle = Math.max(dec(this.startle, .12), th?.startle || 0);
+    this.threatMemoryT = Math.max(0, this.threatMemoryT - dt);
+    if (th?.source) {
+      this.threatSource = th.source; this.threatMemoryT = 6;
+      this.threatKind = th.sourceKind || th.predatorKind || th.odourKind || th.soundKind;
+    } else if (!this.threatMemoryT) this.threatSource = null;
+    this.threatDist = this.threatSource ? Math.hypot(s.x - this.threatSource.x, s.z - this.threatSource.z) : Infinity;
+    this.threatBearing = this.threatSource ? Math.atan2(this.threatSource.x - s.x, this.threatSource.z - s.z) : 0;
+    const refuge = th?.shelterTarget;
+    const safeRefuge = refuge && (!this.threatSource || this.threatKind === 'owl'
+      || Math.hypot(refuge.x - this.threatSource.x, refuge.z - this.threatSource.z) > .28);
+    this.escapeTarget = safeRefuge ? refuge : null;
+    this.sheltered = !!th?.sheltered && (!this.threatSource || this.threatKind === 'owl' || this.threatDist > .28);
 
-    // the avoidance score starts over whenever a new source is put down
-    const kind = th ? th.odourKind : null;
-    if (kind !== this.threatKind) {
-      this.threatKind = kind;
-      this.avoidT = 0;
-      this.avoidIn = 0;
+    if ((th?.odourKind || null) !== this.odourKind) {
+      this.odourKind = th?.odourKind || null; this.avoidT = this.avoidIn = 0;
     }
-
-    // Fear outlasts the stimulus: a two-second call leaves a mouse defensive
-    // for the best part of a minute. Bright light makes everything worse, and
-    // so does watching the other mouse freeze — fear is socially transmitted
-    // (Jeon et al. 2010).
-    const cue = Math.max(sound, pred * 0.9, loom, socialFreeze * 0.45);
+    // A brief neutral noise produces a startle, not a sustained predator state.
+    // Cover reduces exposure and permits faster recovery; residual fear outlasts the cue.
+    const cue = Math.max(predatorSound * .75, visual, pred * .85, loom, socialFreeze * .18);
     this.defenseGain = this.drives.fear ? 1 : 0;
-    const amp = 0.75 + 0.45 * this.light;
-    this.fear = Math.max(dec(this.fear, 22), clamp(cue * amp, 0, 1));
-    if (!this.drives.fear) this.fear = 0;
+    const amp = (.75 + .35 * this.light) * this.defenseBias;
+    this.fear = this.drives.fear ? Math.max(dec(this.fear, this.sheltered ? 6 : 18), clamp(cue * amp, 0, 1)) : 0;
 
-    // ---- pick a defence, and hold it long enough to be a bout ----
     this.defenseT = Math.max(0, this.defenseT - dt);
-    if (loom > 0.25 || (onset && imminence > 0.85)) {
-      this.mode = 'flight';
-      this.defenseT = Math.max(this.defenseT, 2.4);
-    } else if (onset && imminence > 0.3) {
-      // freezing bouts last tens of seconds in a real mouse; compressed here
-      this.mode = 'freeze';
-      this.defenseT = 5 + 7 * this.fear;
-    } else if (this.startle > 0.3 && this.defenseT <= 0) {
-      this.mode = 'freeze';
-      this.defenseT = 1.2 + 2 * this.fear;
-    } else if (pred > 0.55) {
-      // right on top of the source: no more assessing, just leave
-      this.mode = 'flight';
-      this.defenseT = Math.max(this.defenseT, 0.9);
+    const detected = Math.max(predatorSound, visual, pred, loom) > .12;
+    const urgent = loom > .42 || (visual > .28 && imminence > .73) || pred > .62;
+    if (!this.drives.fear) {
+      this.mode = null; this.defenseT = 0;
+    } else if (this.sheltered && (detected || this.fear > .16 || this.mode === 'hide' && this.defenseT > 0)) {
+      if (this.mode !== 'hide') this.defenseT = 1.8 * this.defenseBias;
+      this.mode = 'hide';
+      if (detected) this.defenseT = Math.max(this.defenseT, 1.2);
+    } else if (urgent) {
+      // A known refuge permits directed flight. Without one, overhead danger
+      // can elicit freezing; very close ground danger still triggers retreat.
+      this.mode = this.escapeTarget || pred > .62 || imminence > .87 ? 'flight' : 'freeze';
+      this.defenseT = Math.max(this.defenseT, this.mode === 'flight' ? 4 : .7);
+    } else if (onset && detected && onset !== 'burst') {
+      this.mode = onset === 'owl' && this.escapeTarget ? 'flight' : 'freeze';
+      this.defenseT = this.mode === 'flight' ? 4 : .55 * this.defenseBias;
     } else if (this.defenseT <= 0) {
-      this.mode = (this.fear > 0.18 || pred > 0.05) ? 'risk' : null;
+      if (this.mode === 'freeze' && this.escapeTarget && detected && this.fear > .2) {
+        this.mode = 'flight'; this.defenseT = 4;
+      } else if (this.startle > .25) {
+        this.mode = 'freeze'; this.defenseT = .18 + this.startle * .2;
+      } else this.mode = this.fear > .14 || pred > .07 ? 'risk' : null;
     }
-    if (!this.drives.fear) { this.mode = null; this.defenseT = 0; }
 
     const want = { freeze: 0, flight: 0, risk: 0 };
-    if (this.mode === 'freeze') want.freeze = clamp(0.5 + 0.5 * this.fear, 0, 1);
-    else if (this.mode === 'flight') want.flight = clamp(0.6 + 0.4 * Math.max(this.fear, loom), 0, 1);
-    else if (this.mode === 'risk') want.risk = clamp(0.3 + 0.7 * Math.max(this.fear, pred), 0, 1);
-    const k = Math.min(1, dt * 7);
+    if (this.mode === 'freeze') want.freeze = .65 + .35 * this.fear;
+    else if (this.mode === 'hide') want.freeze = .6 + .3 * this.fear;
+    else if (this.mode === 'flight') want.flight = .65 + .35 * Math.max(this.fear, loom);
+    else if (this.mode === 'risk') want.risk = .35 + .65 * Math.max(this.fear, pred);
+    const k = Math.min(1, dt * 10);
     this.freeze += (want.freeze - this.freeze) * k;
-    // escape is the fastest thing a mouse does: ~250 ms from stimulus to run
-    this.flight += (want.flight - this.flight) * (want.flight > this.flight ? Math.min(1, dt * 20) : k);
+    this.flight += (want.flight - this.flight) * (want.flight > this.flight ? Math.min(1, dt * 25) : k);
     this.risk += (want.risk - this.risk) * k;
 
     // Avoidance is not the same thing as fear. A rotten smell is avoided
@@ -1576,7 +1590,7 @@ export class Brain {
 
     // ---- the measures an experimenter would actually report ----
     this.freezePct += ((this.freeze > 0.5 ? 1 : 0) - this.freezePct) * Math.min(1, dt / 30);
-    const src = this.threatSource;
+    const src = th?.odourSource;
     if (src) {
       this.avoidT += dt;
       // the quadrant the stimulus is in: 25% of the arena, so 25% is chance
@@ -1588,6 +1602,7 @@ export class Brain {
 
   /** the defensive behaviour running right now, if any */
   get defenseState() {
+    if (this.mode === 'hide' && this.freeze > .35) return 'HIDING';
     if (this.flight > 0.35) return 'FLEEING';
     if (this.freeze > 0.45) return 'FREEZING';
     // assessing needs something to assess; without it the animal is just wary
@@ -2033,7 +2048,8 @@ export class Brain {
     this.cheeseCount = 0;
     this.swrCount = 0;
     this.threatSound = this.predatorOdour = this.foulOdour = this.vnoThreat = 0;
-    this.looming = this.startle = this.fear = 0;
+    this.looming = this.startle = this.fear = this.visualThreat = 0;
+    this.sheltered = false; this.escapeTarget = null; this.threatMemoryT = 0; this.odourKind = null;
     this.freeze = this.flight = this.risk = this.cort = this.aversion = 0;
     this.mode = null;
     this.defenseT = 0;

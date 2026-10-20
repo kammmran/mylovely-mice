@@ -1,28 +1,11 @@
-/**
- * Aversive stimuli: the things a mouse is afraid of.
- *
- * Six stimuli, each one a standard laboratory assay rather than an invention:
- * a cat call, an owl swooping overhead, a startling noise burst, fox-faeces
- * odour (TMT) on filter paper, a worn cat collar, and something merely rotten.
- * The last one is the control: it is strongly avoided and not at all frightening,
- * which is how a mouse treats a bad smell that is not a predator.
- *
- * This module owns the *stimulus* — its physics, its props in the arena, the
- * sound it makes, and how it fades. What the mouse does about it belongs to the
- * brain (src/neuro/brain.js, the defensive-circuit section) and to the body
- * (src/main.js). Nothing here decides behaviour.
- *
- * Two properties of real stimuli are modelled explicitly because they change
- * what you see:
- *   - Sounds habituate. A noise burst that makes the mouse jump the first time
- *     barely registers by the fifth, and the startle recovers over minutes
- *     (Koch 1999; Davis 1980).
- *   - Predator odours do not. TMT avoidance is as strong on the third exposure
- *     as the first, which is one of the reasons it is used (Fendt et al. 2005).
+/** Stimulus presentation, spatial sensing, procedural props and optional audio.
+ * Defensive choices belong to Brain.updateDefense and the movement controller.
+ * Cue strengths, trajectories and durations are illustrative simulation parameters.
  */
 import * as THREE from 'three';
+import { PredatorVisuals } from './predators.js';
+import { predatorExposure } from './threatmodel.js';
 
-const TAU = Math.PI * 2;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 /** where a volatile stimulus is put down: the standard "stimulus corner" */
@@ -38,18 +21,17 @@ const ODOUR_R = 0.24;
  */
 export const STIMULI = {
   cat: {
-    label: 'cat call',
+    label: 'cat approach',
     icon: '🐈',
     kind: 'sound',
     key: '1',
     dur: 2.4,
     level: 1,
     imminence: 0.62,
-    habituates: 0.78,
-    blurb: 'A cat yowling just outside the cage.',
-    detail: 'A predator vocalisation with no escape route available. Mice freeze: '
-          + 'immobile except for breathing, usually pressed against a wall, and they '
-          + 'stop eating and stop courting for as long as the fear lasts.',
+    habituates: 0.9,
+    blurb: 'A visible cat approaches beside this cage and calls.',
+    detail: 'Mice orient or freeze briefly, then retreat to a known refuge. '
+          + 'A close approach can trigger immediate escape; animals under cover stay hidden.',
     ref: 'Blanchard & Blanchard 1989; Staples 2010',
   },
   owl: {
@@ -62,11 +44,9 @@ export const STIMULI = {
     level: 1,
     imminence: 1,
     habituates: 0.9,
-    blurb: 'A screech and a shadow expanding overhead.',
-    detail: 'An expanding dark disc overhead is the signature of something falling '
-          + 'towards you, and a mouse does not need to learn what it means: the '
-          + 'superior colliculus drives an immediate escape burst to the nearest '
-          + 'wall or shelter, within about a quarter of a second.',
+    blurb: 'An owl flies low across the cage, casting a moving shadow.',
+    detail: 'An approaching overhead threat favors escape to a known refuge. '
+          + 'Without a known shelter, mice can freeze instead. Mice already under cover stay there.',
     ref: 'Yilmaz & Meister 2013; De Franceschi et al. 2016',
   },
   burst: {
@@ -79,7 +59,7 @@ export const STIMULI = {
     startle: true,
     imminence: 0.45,
     habituates: 0.55,
-    blurb: 'A sudden ~105 dB white-noise burst.',
+    blurb: 'A brief synthesized noise burst.',
     detail: 'The acoustic startle reflex: a whole-body flinch with a latency of a '
           + 'few milliseconds, carried by a three-synapse brainstem arc. It is the '
           + 'textbook example of habituation — repeat it and the jump shrinks fast, '
@@ -98,10 +78,8 @@ export const STIMULI = {
     habituates: 1,
     colour: 0xc98500,
     blurb: 'Trimethylthiazoline on filter paper, in the far corner.',
-    detail: 'The best-studied predator odour: a component of fox faeces, detected '
-          + 'through the ordinary nose. A mouse that has never met a fox avoids the '
-          + 'corner it is in, sniffs towards it from a distance with its body '
-          + 'stretched out, and runs a stress response — and it does not habituate.',
+    detail: 'A predator-odor gradient prompts cautious sampling and avoidance. '
+          + 'Close contact can trigger retreat. The response depends on concentration and shelter.',
     ref: 'Fendt et al. 2005; Rosen et al. 2015',
   },
   collar: {
@@ -116,11 +94,8 @@ export const STIMULI = {
     habituates: 1,
     colour: 0xd55181,
     blurb: 'A collar worn by a cat, dropped in the far corner.',
-    detail: 'Cat odour is read mostly by the vomeronasal organ, which picks out '
-          + 'predator proteins directly — and a mouse whose vomeronasal channel is '
-          + 'knocked out walks up to a sedated rat and grooms it. The route runs '
-          + 'AOB to medial amygdala to the dorsomedial hypothalamus, which is a '
-          + 'different line into defence than the one the cat call takes.',
+    detail: 'Predator scent recruits defensive pathways and encourages cautious '
+          + 'sampling from a distance. The model includes a vomeronasal contribution.',
     ref: 'Papes et al. 2010; Canteras 2002',
   },
   foul: {
@@ -147,11 +122,7 @@ export const STIMULI = {
 export const STIMULUS_ORDER = ['cat', 'owl', 'burst', 'tmt', 'collar', 'foul'];
 
 // --------------------------------------------------------------- sound
-/**
- * The sounds, synthesised rather than sampled so the page stays one directory.
- * They are also transposed down: a real cat call runs well past where mouse
- * hearing is most sensitive (2-85 kHz), and a browser cannot play that.
- */
+/** Browser-friendly synthesized cues; not calibrated animal vocalizations. */
 class Siren {
   constructor() {
     this.ctx = null;
@@ -264,7 +235,9 @@ export class Threats {
     this.siren = new Siren();
 
     this.sound = null;          // the sound playing right now, if any
-    this.loom = null;           // the looming overhead stimulus, if any
+    this.loom = null;           // the current owl flyover, if any
+    this.predator = null;
+    this.predatorVisuals = null; // built on first presentation
     this.odour = null;          // the volatile source on the floor, if any
     this.onset = null;          // key of a stimulus that started this frame
     this.pendingOnset = null;   // set by trigger(), published by the next update()
@@ -306,16 +279,6 @@ export class Threats {
     this.srcRing.position.y = 0.0025;
     this.srcGroup.add(this.srcRing);
     this.group.add(this.srcGroup);
-
-    // ---- props: the looming disc overhead ----
-    this.loomMesh = new THREE.Mesh(
-      new THREE.CircleGeometry(0.1, 48),
-      new THREE.MeshBasicMaterial({ color: 0x05070a, transparent: true, opacity: 0.92, toneMapped: false }),
-    );
-    this.loomMesh.rotation.x = Math.PI / 2;
-    this.loomMesh.position.set(0, 0.52, 0);
-    this.loomMesh.visible = false;
-    this.group.add(this.loomMesh);
 
     // ---- props: an expanding ring marking a sound ----
     this.ping = new THREE.Mesh(
@@ -367,7 +330,12 @@ export class Threats {
       this.pingT = 0;
       this.siren.play(key, level);
       if (st.startle) this.startle = level;
-      if (st.looming) this.loom = { t: 0, rep: 0, reps: 6, level };
+      if (key === 'cat' || key === 'owl') {
+        this.predator = { key, t: 0, dur: key === 'cat' ? 10 : 4.2, level: Math.max(.75, level) };
+        this.loom = key === 'owl' ? this.predator : null;
+        this.predatorVisuals ||= new PredatorVisuals(this.group);
+        this.predatorVisuals.update(this.predator);
+      }
     } else {
       this.odour = { key, t: 0, level, st, x: SOURCE_SPOT.x, z: SOURCE_SPOT.z };
       this.pendingOnset = key;
@@ -385,9 +353,19 @@ export class Threats {
     this.srcGroup.visible = false;
   }
 
+  /** Remove the current presentation; the animal's recovery is independent. */
+  clear() {
+    this.clearOdour();
+    this.sound = this.loom = this.predator = null;
+    this.onset = this.pendingOnset = null;
+    this.startle = 0;
+    this.predatorVisuals?.update(null);
+    this.ping.material.opacity = 0; this.pingT = 99;
+  }
+
   /** everything off, habituation included */
   reset() {
-    this.clearOdour();
+    this.clear();
     this.sound = null;
     this.loom = null;
     this.onset = null;
@@ -396,7 +374,6 @@ export class Threats {
     this.count = {};
     this.habit = {};
     this.lastAt = {};
-    this.loomMesh.visible = false;
     this.ping.material.opacity = 0;
     this.pingT = 99;
   }
@@ -413,24 +390,10 @@ export class Threats {
       if (this.sound.t > this.sound.dur) this.sound = null;
     }
 
-    // the looming disc: ~0.3 s of expansion, a pause, then again
-    if (this.loom) {
-      const L = this.loom;
-      L.t += dt;
-      const period = 0.55, grow = 0.3;
-      const u = clamp((L.t % period) / grow, 0, 1);
-      L.rep = Math.floor(L.t / period);
-      if (L.rep >= L.reps) {
-        this.loom = null;
-        this.loomMesh.visible = false;
-      } else {
-        // angular size 2 deg -> 40 deg, the stimulus Yilmaz & Meister used
-        const r = 0.018 + 0.42 * u * u;
-        this.loomMesh.scale.setScalar(r / 0.1);
-        this.loomMesh.material.opacity = 0.35 + 0.6 * u;
-        this.loomMesh.visible = true;
-        L.now = u * L.level;
-      }
+    if (this.predator) {
+      this.predator.t += dt;
+      if (this.predator.t >= this.predator.dur) this.predator = this.loom = null;
+      this.predatorVisuals.update(this.predator);
     }
 
     // the odour evaporates: strong for a minute, gone within about four
@@ -472,32 +435,41 @@ export class Threats {
    * cage; the odour is a gradient the animal has to move through, which is what
    * makes avoidance measurable.
    */
-  sense(x, z) {
+  sense(x, z, heading = 0, sheltered = false) {
     const out = {
       sound: 0, soundKind: null, onset: null, startle: this.startle,
       odour: 0, odourKind: null, predatorOdour: 0, foulOdour: 0, vno: 0,
-      looming: 0, imminence: 0, source: null, sourceDist: Infinity, sourceBearing: 0,
+      visual: 0, predatorKind: null, looming: 0, imminence: 0, source: null, sourceDist: Infinity, sourceBearing: 0,
+      odourSource: null, sourceKind: null, sheltered,
     };
     if (this.sound) {
       const s = this.sound;
       // the call is loudest while it sounds and stops when it stops
       out.sound = s.level * (s.st.startle ? 1 : 0.55 + 0.45 * Math.sin(s.t * 3.1) ** 2);
+      out.sound *= sheltered && s.key !== 'burst' ? .3 : 1;
       out.soundKind = s.key;
       out.imminence = Math.max(out.imminence, s.st.imminence * s.level);
     }
     if (this.onset) out.onset = this.onset;
-    if (this.loom && this.loom.now) {
-      out.looming = this.loom.now;
-      out.imminence = Math.max(out.imminence, STIMULI.owl.imminence * this.loom.now);
+    const exposure = predatorExposure(this.predator, x, z, heading, sheltered);
+    if (this.predator && exposure.visual > .015) {
+      Object.assign(out, exposure);
+      out.visual *= this.predator.level;
+      out.predatorKind = this.predator.key;
+      out.sourceKind = this.predator.key;
     }
     const o = this.odour;
     if (o) {
       const c = this.odourAt(x, z);
       out.odour = c;
       out.odourKind = o.key;
-      out.source = { x: o.x, z: o.z };
-      out.sourceDist = Math.hypot(x - o.x, z - o.z);
-      out.sourceBearing = Math.atan2(o.x - x, o.z - z);
+      out.odourSource = { x: o.x, z: o.z };
+      if (!out.source || out.visual < c * .6) {
+        out.source = out.odourSource;
+        out.sourceKind = o.key;
+        out.sourceDist = Math.hypot(x - o.x, z - o.z);
+        out.sourceBearing = Math.atan2(o.x - x, o.z - z);
+      }
       if (o.st.predator) {
         out.predatorOdour = c;
         out.vno = c * o.st.vno;
@@ -517,6 +489,7 @@ export class Threats {
       sound: this.sound ? STIMULI[this.sound.key].label : null,
       odour: this.odour ? { label: STIMULI[this.odour.key].label, level: this.odour.level, key: this.odour.key } : null,
       looming: !!this.loom,
+      predator: this.predator ? { key: this.predator.key, label: STIMULI[this.predator.key].label } : null,
     };
   }
 }

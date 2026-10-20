@@ -102,6 +102,17 @@ to the mouse observed at capture time; colony totals cover all cages.
 
 ## The simulation
 
+Click a mouse to open **Mouse anatomy**, or use the button in the Explore menu.
+The floating window has skeleton, organ, blood-system, and nerve views. The
+skeleton follows the selected mouse’s live joint positions, including walking,
+grooming, and defensive postures. Pause the simulation to stop both views, or
+turn off **Follow movement** to hold the anatomy while the colony continues.
+Rotate and zoom the model, choose a viewing angle, and select a structure for
+its name and description. Body outlines and labels can be hidden.
+
+The anatomy is a schematic model, with approximate organ shapes and illustrative
+pulses and blood flow. See [docs/anatomy.md](docs/anatomy.md) for its scope.
+
 The cages form a 3×3 grid:
 
 ```text
@@ -113,6 +124,15 @@ crowded        fox odor        intermittent noise
 Each cage has its own animals and conditions. Opening the tunnels lets mice move
 between cages. The model keeps a separate hippocampal map for each environment
 and restores it when a mouse returns.
+
+Mice remember food and water they discover, follow needs before casual exploration,
+and pause for sniffing, feeding, grooming, and rest. Nearby mice give each other
+space, and a refuge in each cage provides a resting place. Threat responses can
+interrupt these routines. See [behavior notes](docs/behavior.md) for how decisions work.
+
+The bodies use tapered faces, cupped ears, small paws, textured coats, and continuous
+tails. Distant mice use a simpler version of the same shape to keep larger colonies
+running smoothly.
 
 Each mouse has modeled populations across 38 brain regions. These include place,
 grid, head-direction, sensory, motor, reward, and internal-state populations.
@@ -129,12 +149,18 @@ Six threat controls are available:
 
 | Key | Stimulus | Modeled response |
 |---|---|---|
-| `1` | Cat call | Freezing |
-| `2` | Owl swoop | Flight toward a wall |
+| `1` | Cat approach | Brief freezing, then retreat to a known refuge |
+| `2` | Owl flyover | Shelter-directed escape, or freezing without a known refuge |
 | `3` | Noise burst | Startle |
 | `4` | Fox odor | Risk assessment and avoidance |
 | `5` | Cat collar | Predator-odor response |
 | `6` | Rotten smell | Avoidance |
+
+The cat appears beside the selected cage; the owl flies overhead with animated
+wings and a moving shadow. Distance, facing direction, and cover affect visual
+detection. Mice that reach a refuge stay hidden before cautiously resuming activity.
+Noise produces a brief startle rather than sustained predator fear. Use **Remove
+stimuli** or `0` to remove the presentation; fear then subsides gradually.
 
 The optogenetics panel lets you choose an opsin and brain region, apply light,
 and inspect changes in activity and behavior. Implants are configured per mouse.
@@ -184,12 +210,14 @@ With Node.js 22 or later, run the source and report checks from the project root
 node .github/scripts/check-imports.mjs
 node .github/scripts/check-page.mjs
 node .github/scripts/check-report.mjs
+node .github/scripts/check-behavior.mjs
+node .github/scripts/check-threats.mjs
 ```
 
 [CI](.github/workflows/ci.yml) also checks module syntax and JSON files, then runs
 Playwright against the staged site at `/mylovely-mice/`. The browser checks cover
-the simulation, panel controls, saved preferences, mobile layout, report choices,
-and document downloads.
+the simulation, predator responses, live anatomy, panel controls, saved preferences,
+mobile layout, report choices, and document downloads.
 
 Pushes to `main` run [the Pages workflow](.github/workflows/deploy.yml). It publishes
 only after the checks pass. To deploy a fork, set **Settings → Pages → Build and

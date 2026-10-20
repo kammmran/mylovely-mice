@@ -1,14 +1,15 @@
 # Where the mouse's body comes from
 
 The brain model's citations live in [`src/neuro/regions.js`](../src/neuro/regions.js),
-one per region. This page covers the other half: the **body**. Every physical
-number the rig uses — segment lengths, joint limits, gait timings, whisking and
-breathing rates — is a published measurement rather than an eyeballed value.
+one per region. This page covers the body's locomotion parameters: segment
+lengths, joint limits, gait timings, whisking, and breathing rates.
 
 Those numbers are defined once, with units and a citation each, in
 [`src/world/mousedata.js`](../src/world/mousedata.js), and mirrored for
 non-browser use in [`data/mouse_biometrics.json`](../data/mouse_biometrics.json).
-`mouse.js` hardcodes nothing physical; it imports from there.
+`mouse.js` imports these parameters. Coat, face, ear and tail geometry in
+`mouseappearance.js` approximates a mouse's appearance; it is not a measured
+surface reconstruction. The continuous tail uses a visual deformation curve.
 
 ## Sources
 
@@ -37,7 +38,7 @@ two-segment plus a short manus.
 
 **Joint limits.** Taken from Table 1 of the whole-body model and applied as
 clamps on the IK output: hip, knee, ankle, shoulder, elbow, wrist, lumbar,
-thoracic, cervical, head, jaw and per-tail-segment. The rig's joint frames are
+thoracic, cervical, head and jaw. The rig's joint frames are
 not anatomically identical to the model these came from, so they act as a safety
 net rather than as a reproduction of the original frames.
 

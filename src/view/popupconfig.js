@@ -5,6 +5,7 @@ export const POPUPS = {
   feed: { title: 'Activity feed', description: 'Follow what happens in the colony', icon: 'activity', home: 'bottom-left', width: 350, height: 340 },
   threats: { title: 'Threat stimuli', description: 'Present a stimulus & watch the response', icon: 'bolt', home: 'top-left', width: 350, height: 610 },
   mortality: { title: 'Health & survival', description: 'Fighting, stress & causes of death', icon: 'heart', home: 'top-right', width: 350, height: 640 },
+  anatomy: { title: 'Mouse anatomy', description: 'Live skeleton, organs, blood vessels & nerves', icon: 'mouse', home: 'top-right', width: 560, height: 760 },
   signals: { title: 'Neural signals', description: 'Brain waves, spikes & body activity', icon: 'activity', home: 'top-right', width: 420, height: 680 },
   optics: { title: 'Optogenetics', description: 'Control neural activity with light', icon: 'light', home: 'top-right', width: 420, height: 700 },
   report: { title: 'Session report', description: 'Review your colony & export the results', icon: 'report', home: 'center', width: 840, height: 720 },

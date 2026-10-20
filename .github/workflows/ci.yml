@@ -47,6 +47,12 @@ jobs:
       - name: report choices and PDF pagination
         run: node .github/scripts/check-report.mjs
 
+      - name: mouse decisions and navigation
+        run: node .github/scripts/check-behavior.mjs
+
+      - name: predator perception and defense
+        run: node .github/scripts/check-threats.mjs
+
   # The checks above cannot see a module that parses, imports cleanly and then
   # throws the moment it is evaluated. This one loads the page for real.
   smoke:

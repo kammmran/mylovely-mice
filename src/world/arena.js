@@ -117,6 +117,7 @@ export class Arena {
     this.cheeses = [];
     this.cheeseCount = cheeses;
     this.hasDish = dish;
+    this.shelter = { x: -.4, z: .36 };
     this.label = label;
     this.origin = origin ? { x: origin.x, z: origin.z } : { x: 0, z: 0 };
     this.group = new THREE.Group();
@@ -269,6 +270,15 @@ export class Arena {
     this.decoded.rotation.x = -Math.PI / 2;
     this.decoded.position.y = 0.004;
     this.group.add(this.decoded);
+
+    // Open at both ends; mice can rest beneath the roof without a blocked path.
+    const refuge = new THREE.Mesh(new THREE.CylinderGeometry(.068, .068, .16, 24, 1, true,
+      Math.PI / 2, Math.PI), new THREE.MeshStandardMaterial({ color: 0x8f7152,
+      roughness: .95, side: THREE.DoubleSide }));
+    refuge.rotation.x = Math.PI / 2;
+    refuge.position.set(this.shelter.x, .002, this.shelter.z);
+    refuge.castShadow = true; refuge.receiveShadow = true;
+    this.group.add(refuge);
 
     // ---- water dish -------------------------------------------------
     // A cage can be run without one, which is the point of the dry box in a
