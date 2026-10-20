@@ -95,8 +95,9 @@ export const LAYOUT = [
 ];
 
 const CSS = `
-#boxes{left:286px;top:92px;width:290px;display:flex;flex-direction:column}
-#boxes .body{padding:0 10px 9px}
+#boxes{left:12px;top:12px;width:min(290px,calc(100% - 24px));
+  max-height:calc(100% - 24px);display:flex;flex-direction:column}
+#boxes .body{padding:0 10px 9px;min-height:0;overflow-y:auto}
 #bx-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .bx{background:#101a26;border:1px solid var(--line,#15202c);border-radius:5px;padding:4px 5px;
   cursor:pointer;transition:.12s;min-width:0}
