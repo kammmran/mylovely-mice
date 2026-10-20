@@ -1,3 +1,5 @@
+import { POPUPS, popupIcon } from './popupconfig.js';
+
 /** Sidebar navigation and readable controls around the existing simulation. */
 export function mountInterface({ getState, nextMouse, togglePanel, restart, cleanView, resize }) {
   const $ = (id) => document.getElementById(id);
@@ -57,6 +59,7 @@ export function mountInterface({ getState, nextMouse, togglePanel, restart, clea
   $('brain-pane').inert = mobile.matches;
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !document.querySelector('dialog[open]') && mobile.matches && document.body.classList.contains('sidebar-open')) {
+      event.preventDefault();
       setMenu(false);
     }
     if (mobile.matches && document.body.classList.contains('sidebar-open') && event.key === 'Tab' && !document.querySelector('dialog[open]')) {
@@ -81,34 +84,77 @@ export function mountInterface({ getState, nextMouse, togglePanel, restart, clea
   function enhancePanel(card) {
     const heading = card.querySelector('h5[data-fold]');
     if (!heading) return;
+    const definition = POPUPS[card.id];
+    const title = definition?.title || heading.textContent.trim();
+    card.classList.add('popup-window');
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-label', title);
+    if (definition) {
+      card.style.width = `${definition.width}px`;
+      card.style.setProperty('--popup-preferred-height', `${definition.height}px`);
+    }
+    const existingClose = heading.querySelector('button');
+    const status = [...heading.querySelectorAll('#col-sub, #bx-sub, #thr-sub, #rp-sub')];
+    heading.replaceChildren();
     const fold = document.createElement('button');
     fold.className = 'panel-fold';
     fold.type = 'button';
-    fold.setAttribute('aria-expanded', String(!card.hasAttribute('data-collapsed')));
-    for (const node of [...heading.childNodes]) {
-      if (node.nodeName !== 'BUTTON') fold.appendChild(node);
-    }
+    const icon = document.createElement('span');
+    icon.className = 'popup-icon';
+    icon.innerHTML = popupIcon(definition?.icon);
+    const copy = document.createElement('span');
+    copy.className = 'popup-heading-copy';
+    const name = document.createElement('strong');
+    name.textContent = title;
+    const description = document.createElement('small');
+    description.textContent = definition?.description || '';
+    copy.append(name, description);
+    fold.append(icon, copy);
     heading.prepend(fold);
     heading.removeAttribute('data-fold');
-    fold.onclick = () => {
-      card.toggleAttribute('data-collapsed');
-      fold.setAttribute('aria-expanded', String(!card.hasAttribute('data-collapsed')));
+    const minimize = document.createElement('button');
+    minimize.type = 'button';
+    minimize.className = 'panel-minimize';
+    const sync = () => {
+      const collapsed = card.hasAttribute('data-collapsed');
+      fold.setAttribute('aria-expanded', String(!collapsed));
+      minimize.setAttribute('aria-expanded', String(!collapsed));
+      minimize.setAttribute('aria-label', `${collapsed ? 'Expand' : 'Minimize'} ${title}`);
+      minimize.title = `${collapsed ? 'Expand' : 'Minimize'} window`;
+      minimize.textContent = collapsed ? '+' : '−';
     };
-    const existingClose = heading.querySelector('button:not(.panel-fold)');
+    const collapse = () => {
+      card.toggleAttribute('data-collapsed');
+      sync();
+    };
+    fold.onclick = collapse;
+    minimize.onclick = (event) => { event.stopPropagation(); collapse(); };
+    heading.appendChild(minimize);
+    sync();
+    new MutationObserver(sync).observe(card, { attributes: true, attributeFilter: ['data-collapsed'] });
+    if (status.length) {
+      const context = document.createElement('div');
+      context.className = 'popup-context';
+      context.append(...status);
+      heading.after(context);
+    }
     const persistent = ['boxes', 'colony', 'feed', 'threats', 'keys', 'mortality'].includes(card.id);
-    if (existingClose && !persistent) return;
-    if (!persistent && card.id !== 'signals') return;
     const close = existingClose || document.createElement('button');
+    close.classList.remove('og-close', 'mo-close');
     close.classList.add('panel-close');
     close.type = 'button';
     close.textContent = '×';
-    close.setAttribute('aria-label', `Close ${card.id === 'boxes' ? 'nine cages' : card.id} panel`);
-    close.onclick = (event) => {
-      event.stopPropagation();
-      if (persistent) togglePanel(card.id, false);
-      else card.style.display = 'none';
-    };
-    if (!existingClose) heading.appendChild(close);
+    close.setAttribute('aria-label', `Close ${title}`);
+    close.title = 'Close window · Esc';
+    if (persistent || !existingClose) {
+      close.onclick = (event) => {
+        event.stopPropagation();
+        if (persistent) togglePanel(card.id, false);
+        else if (card.querySelector('[data-act="close"]')) card.querySelector('[data-act="close"]').click();
+        else card.style.display = 'none';
+      };
+    }
+    heading.appendChild(close);
   }
   for (const card of document.querySelectorAll('.float')) enhancePanel(card);
   // Signals and optogenetics mount asynchronously after the main interface.

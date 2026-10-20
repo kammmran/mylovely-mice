@@ -137,6 +137,7 @@ for (const [tab, button, card] of [['Explore', '#b-boxes', '#boxes'], ['Tools', 
   if (!await visible(card)) fail.push(`${card} did not open on the first click`);
   if (card === '#boxes') {
     const before = await page.locator(card).boundingBox();
+    if (before.x !== 12 || before.y !== 12) fail.push('Nine cages did not open in the platform corner');
     const title = await page.locator(`${card} .panel-fold`).boundingBox();
     await page.mouse.move(title.x + 40, title.y + title.height / 2);
     await page.mouse.down();
@@ -144,6 +145,13 @@ for (const [tab, button, card] of [['Explore', '#b-boxes', '#boxes'], ['Tools', 
     await page.mouse.up();
     const after = await page.locator(card).boundingBox();
     if (after.x <= before.x + 100 || after.y <= before.y + 60 || !await visible(`${card} .body`)) fail.push('Dragging a popup did not move it independently, or collapsed its body');
+    await page.locator(`${card} .popup-reset`).click();
+    const reset = await page.locator(card).boundingBox();
+    if (reset.x !== 12 || reset.y !== 12) fail.push('Reset position did not restore the cage corner');
+    await page.locator(`${card} .panel-minimize`).click();
+    if (await visible(`${card} .body`) || await visible(`${card} .popup-toolbar`)) fail.push('Minimize left popup content visible');
+    await page.locator(`${card} .panel-minimize`).click();
+    if (!await visible(`${card} .body`)) fail.push('Expand did not restore the popup body');
   }
   await page.locator(`${card} .panel-close`).click();
   if (await visible(card)) fail.push(`${card} did not close`);
@@ -154,14 +162,26 @@ if (await page.locator('.sidebar-content').evaluate((node) => node.scrollHeight)
 const settings = await page.locator('#panel-menu').boundingBox();
 const platform = await page.locator('#world-pane').boundingBox();
 if (!settings || settings.x < platform.x || settings.x + settings.width > platform.x + platform.width) fail.push('Panel settings did not float over the platform');
-await page.getByRole('menuitemcheckbox', { name: /what just happened/ }).click();
+if (settings.y !== platform.y + 12) fail.push('Panel settings did not open at the top edge');
+await page.getByRole('button', { name: 'Brain', exact: true }).click();
+if (await page.getByRole('menuitemcheckbox').count() !== 5) fail.push('Brain panel category did not filter the settings');
+await page.getByRole('button', { name: 'Charts', exact: true }).click();
+if (await page.getByRole('menuitemcheckbox').count() !== 3) fail.push('Charts panel category did not filter the settings');
+await page.getByRole('button', { name: 'Platform', exact: true }).click();
+await page.getByRole('menuitemcheckbox', { name: /Activity feed/ }).click();
 if (!await visible('#feed')) fail.push('event feed did not open from the Panels menu');
+await page.waitForFunction(() => document.getElementById('feed').classList.contains('is-floating'));
+const feed = await page.locator('#feed').boundingBox();
+if (feed.x < settings.x + settings.width && feed.x + feed.width > settings.x
+  && feed.y < settings.y + settings.height && feed.y + feed.height > settings.y) fail.push('Popups overlap even though they fit side by side');
+await page.keyboard.press('Escape');
+if (await visible('#panel-menu') || !await visible('#feed')) fail.push('Escape did not close just the active popup');
 await page.reload({ waitUntil: 'load' });
 await page.waitForFunction(() => !!window.sim);
 if (!await visible('#feed')) fail.push('panel choice was not remembered after reload');
 await page.getByRole('tab', { name: 'Tools', exact: true }).click();
 await page.click('#b-panels');
-await page.getByRole('button', { name: 'show all', exact: true }).click();
+await page.getByRole('button', { name: 'Show all', exact: true }).click();
 if (!await visible('#footer')) fail.push('show all did not restore the bottom charts');
 await page.click('#b-clean');
 await page.keyboard.press('Escape');

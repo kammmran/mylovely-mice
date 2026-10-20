@@ -1098,17 +1098,17 @@ const PANELS = [
   { key: 'region', label: 'Region details', group: 'side panel' },
   { key: 'maps', label: 'Learned maps', group: 'side panel' },
   { key: 'regions', label: 'All regions', group: 'side panel' },
-  { key: 'spikes', label: 'spike raster', group: 'along the bottom' },
-  { key: 'waves', label: 'brain waves', group: 'along the bottom' },
-  { key: 'reward', label: 'reward traces', group: 'along the bottom' },
-  { key: 'colony', label: 'the colony', group: 'over the arena' },
-  { key: 'feed', label: 'what just happened', group: 'over the arena' },
-  { key: 'threats', label: 'threats', group: 'over the arena' },
-  { key: 'mortality', label: 'fighting & mortality', group: 'over the arena' },
-  { key: 'boxes', label: 'nine cages', group: 'over the arena' },
-  { key: 'keys', label: 'keys', group: 'over the arena' },
-  { key: 'hud', label: 'mouse status & position', group: 'over the arena' },
-  { key: 'scale', label: 'scale bar', group: 'over the arena' },
+  { key: 'spikes', label: 'Spike raster', group: 'along the bottom' },
+  { key: 'waves', label: 'Brain waves', group: 'along the bottom' },
+  { key: 'reward', label: 'Reward traces', group: 'along the bottom' },
+  { key: 'boxes', label: 'Nine cages', group: 'over the arena' },
+  { key: 'colony', label: 'Mouse colony', group: 'over the arena' },
+  { key: 'feed', label: 'Activity feed', group: 'over the arena' },
+  { key: 'threats', label: 'Threat stimuli', group: 'over the arena' },
+  { key: 'mortality', label: 'Health & survival', group: 'over the arena' },
+  { key: 'keys', label: 'Keyboard shortcuts', group: 'over the arena' },
+  { key: 'hud', label: 'Mouse status', group: 'over the arena' },
+  { key: 'scale', label: 'Scale bar', group: 'over the arena' },
 ];
 // A new layout preference leaves old all-panels settings behind. Subsequent
 // visits remember choices made in this layout; "clean view" restores it.
@@ -1149,25 +1149,32 @@ function applyPanels() {
   try { localStorage.setItem(PANEL_STORAGE, JSON.stringify(panelOn)); } catch { /* private mode */ }
 }
 
+let panelCategory = 'over the arena';
+const PANEL_DESCRIPTIONS = {
+  boxes: 'Cage conditions & tunnel controls', colony: 'Select mice & adjust their habitat',
+  feed: 'Recent events in the colony', threats: 'Stimuli & behavioral responses',
+  mortality: 'Fighting, stress & causes of death', keys: 'Navigation & simulation shortcuts',
+  hud: 'Position & behavior on the platform', scale: 'Distance reference for the arena',
+  brain: 'Interactive 3D brain anatomy', busiest: 'Regions with the most activity',
+  region: 'Details for a selected brain region', maps: 'Spatial memories for each habitat',
+  regions: 'Browse every simulated region', spikes: 'Neural firing over time',
+  waves: 'Rhythms of neural activity', reward: 'Reward signals & predictions',
+};
 function buildPanelMenu() {
   const m = $('panel-options');
   const focused = m.contains(document.activeElement) ? document.activeElement.dataset.panelKey : null;
   m.textContent = '';
-  let group = null;
-  for (const p of PANELS) {
-    if (p.group !== group) {
-      group = p.group;
-      const h = document.createElement('h6');
-      h.textContent = { 'side panel': 'Brain tab', 'along the bottom': 'Bottom charts', 'over the arena': 'On the platform' }[group] || group;
-      m.appendChild(h);
-    }
+  for (const button of document.querySelectorAll('[data-panel-category]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.panelCategory === panelCategory));
+  }
+  for (const p of PANELS.filter((panel) => panel.group === panelCategory)) {
     const row = document.createElement('button');
     row.type = 'button';
     row.dataset.panelKey = p.key;
     row.setAttribute('role', 'menuitemcheckbox');
     row.setAttribute('aria-checked', String(shown(p.key)));
     row.className = 'mrow' + (shown(p.key) ? ' on' : '');
-    row.innerHTML = `<span class="box"><span>✓</span></span>${p.label}`;
+    row.innerHTML = `<span class="panel-option-copy"><strong>${p.label}</strong><small>${PANEL_DESCRIPTIONS[p.key]}</small></span><span class="panel-switch" aria-hidden="true"></span>`;
     row.onclick = (e) => { e.stopPropagation(); panelOn[p.key] = !shown(p.key); applyPanels(); buildPanelMenu(); };
     m.appendChild(row);
   }
@@ -1179,8 +1186,8 @@ function buildPanelMenu() {
     b.onclick = (e) => { e.stopPropagation(); fn(); applyPanels(); buildPanelMenu(); };
     return b;
   };
-  foot.appendChild(btn('show all', () => { for (const p of PANELS) panelOn[p.key] = true; }));
-  foot.appendChild(btn('clean view', restoreCleanView));
+  foot.appendChild(btn('Show all', () => { for (const p of PANELS) panelOn[p.key] = true; }));
+  foot.appendChild(btn('Clean view', restoreCleanView));
   $('panel-menu-footer').replaceChildren(foot);
   if (focused) m.querySelector(`[data-panel-key="${focused}"]`)?.focus({ preventScroll: true });
 }
@@ -1196,7 +1203,7 @@ function togglePanelMenu(force) {
     m.removeAttribute('data-collapsed');
     m.querySelector('.panel-fold')?.setAttribute('aria-expanded', 'true');
     buildPanelMenu();
-    floating.open(m, $('b-panels'));
+    floating.open(m);
     requestAnimationFrame(() => m.querySelector('[role="menuitemcheckbox"]')?.focus({ preventScroll: true }));
   } else if (wasOpen && m.contains(document.activeElement)) {
     ($('brain-pane').inert ? $('b-mobile-menu') : $('b-panels')).focus({ preventScroll: true });
@@ -1215,11 +1222,29 @@ function restoreCleanView() {
 }
 $('b-panels').onclick = () => togglePanelMenu();
 $('panel-menu-close').onclick = () => togglePanelMenu(false);
+for (const button of document.querySelectorAll('[data-panel-category]')) {
+  button.onclick = () => { panelCategory = button.dataset.panelCategory; buildPanelMenu(); };
+}
+$('panel-options').addEventListener('keydown', (event) => {
+  const rows = [...$('panel-options').querySelectorAll('[role="menuitemcheckbox"]')];
+  let index = rows.indexOf(document.activeElement);
+  if (event.key === 'ArrowDown') index = (index + 1) % rows.length;
+  else if (event.key === 'ArrowUp') index = (index - 1 + rows.length) % rows.length;
+  else if (event.key === 'Home') index = 0;
+  else if (event.key === 'End') index = rows.length - 1;
+  else return;
+  event.preventDefault();
+  rows[index]?.focus();
+});
 document.addEventListener('click', (e) => {
   if (!$('panel-menu').contains(e.target) && !$('b-panels').contains(e.target)) togglePanelMenu(false);
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') togglePanelMenu(false);
+  if (e.key === 'Escape' && !$('panel-menu').hidden && !document.querySelector('dialog[open]')
+    && !document.body.classList.contains('sidebar-open')) {
+    e.preventDefault();
+    togglePanelMenu(false);
+  }
 });
 
 // clicking a card's title rolls it up without removing it

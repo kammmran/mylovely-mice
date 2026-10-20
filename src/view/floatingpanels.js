@@ -1,3 +1,5 @@
+import { POPUPS } from './popupconfig.js';
+
 /** Movable popup windows, bounded by the platform rather than the sidebar. */
 export function mountFloatingPanels(platform) {
   const positions = new Map();
@@ -18,13 +20,18 @@ export function mountFloatingPanels(platform) {
     windows.forEach((window, order) => { window.style.zIndex = String(40 + order); });
   }
 
-  function place(card) {
-    const position = positions.get(card);
-    if (!position) return;
+  function measure(card) {
     const bounds = platform.getBoundingClientRect();
     card.style.setProperty('--floating-max-width', `${Math.max(0, bounds.width - margin * 2)}px`);
     card.style.setProperty('--floating-max-height', `${Math.max(0, bounds.height - margin * 2)}px`);
     card.classList.add('is-floating');
+    return bounds;
+  }
+
+  function place(card) {
+    const position = positions.get(card);
+    if (!position) return;
+    const bounds = measure(card);
     const rect = card.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     position.x = Math.max(margin, Math.min(position.x, bounds.width - rect.width - margin));
@@ -33,14 +40,48 @@ export function mountFloatingPanels(platform) {
     card.style.setProperty('--floating-y', `${bounds.top + position.y}px`);
   }
 
+  function home(card) {
+    const bounds = measure(card);
+    const rect = card.getBoundingClientRect();
+    const right = Math.max(margin, bounds.width - rect.width - margin);
+    const bottom = Math.max(margin, bounds.height - rect.height - margin);
+    const corners = {
+      'top-left': { x: margin, y: margin }, 'top-right': { x: right, y: margin },
+      'bottom-left': { x: margin, y: bottom }, 'bottom-right': { x: right, y: bottom },
+      center: { x: Math.max(margin, (bounds.width - rect.width) / 2),
+        y: Math.max(margin, (bounds.height - rect.height) / 2) },
+    };
+    const preferred = corners[POPUPS[card.id]?.home || 'top-right'];
+    let position = preferred;
+    // Keep the cage overview in its designated corner. On narrow screens the
+    // top edge also keeps every new window's controls within easy reach.
+    if (card.id !== 'boxes' && bounds.width > 700 && POPUPS[card.id]?.home !== 'center') {
+      const occupied = windows.filter((other) => other !== card && positions.has(other) && other.getClientRects().length)
+        .map((other) => other.getBoundingClientRect());
+      const overlap = (point) => occupied.reduce((area, other) => {
+        const x = bounds.left + point.x, y = bounds.top + point.y;
+        return area + Math.max(0, Math.min(x + rect.width + margin, other.right) - Math.max(x - margin, other.left))
+          * Math.max(0, Math.min(y + rect.height + margin, other.bottom) - Math.max(y - margin, other.top));
+      }, 0);
+      position = [preferred, corners['top-left'], corners['top-right'], corners['bottom-left'], corners['bottom-right']]
+        .reduce((best, point) => overlap(point) < overlap(best) ? point : best, preferred);
+    } else if (bounds.width <= 700) position = { x: margin, y: margin };
+    positions.set(card, { ...position });
+    place(card);
+  }
+
   function schedule() {
     if (scheduled) return;
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
-      for (const card of [...windows]) {
+      const pending = [...windows].sort((a, b) => Number(b.id === 'boxes') - Number(a.id === 'boxes'));
+      for (const card of pending) {
         const shown = card.getClientRects().length > 0;
-        if (shown && !visibility.get(card)) raise(card);
+        if (shown) {
+          if (!positions.has(card)) home(card);
+          if (!visibility.get(card)) raise(card);
+        }
         visibility.set(card, shown);
       }
       if (activeCard?.getClientRects().length) raise(activeCard);
@@ -96,6 +137,17 @@ export function mountFloatingPanels(platform) {
     grip.className = 'floating-grip';
     grip.setAttribute('aria-hidden', 'true');
     handle.prepend(grip);
+    const toolbar = document.createElement('div');
+    toolbar.className = 'popup-toolbar';
+    const hint = document.createElement('span');
+    hint.textContent = 'Drag header to move';
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'popup-reset';
+    reset.textContent = 'Reset position';
+    reset.onclick = () => { home(card); raise(card); };
+    toolbar.append(hint, reset);
+    heading.after(toolbar);
     let suppressClick = false;
 
     card.addEventListener('pointerdown', () => raise(card), true);
@@ -137,6 +189,23 @@ export function mountFloatingPanels(platform) {
     }
   }).observe(document.body, { childList: true });
   addEventListener('resize', schedule);
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')
+      || document.body.classList.contains('sidebar-open')) return;
+    const top = [...windows].reverse().find((card) => card.getClientRects().length);
+    if (!top) return;
+    event.preventDefault();
+    const focused = top.contains(document.activeElement);
+    top.querySelector('.panel-close')?.click();
+    if (focused && !top.getClientRects().length) {
+      const launcher = { boxes: 'b-boxes', colony: 'b-colony', mortality: 'b-mortality',
+        signals: 'b-signals', optics: 'b-optics', report: 'b-report' }[top.id];
+      const trigger = document.getElementById(launcher);
+      (trigger?.getClientRects().length && !trigger.closest('[inert]') ? trigger
+        : document.getElementById('b-mobile-menu')?.getClientRects().length ? document.getElementById('b-mobile-menu')
+          : document.querySelector('[data-tab][aria-selected="true"]'))?.focus({ preventScroll: true });
+    }
+  });
 
   return {
     reset() {
@@ -148,13 +217,8 @@ export function mountFloatingPanels(platform) {
         }
       }
     },
-    open(card, anchor) {
-      if (!positions.has(card)) {
-        const bounds = platform.getBoundingClientRect();
-        const trigger = anchor.getBoundingClientRect();
-        positions.set(card, { x: bounds.width - card.getBoundingClientRect().width - margin,
-          y: trigger.top - bounds.top });
-      }
+    open(card) {
+      if (!positions.has(card)) home(card);
       raise(card);
       place(card);
     },
