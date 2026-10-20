@@ -373,12 +373,13 @@
     .pcard{padding-left:8px;padding-right:8px}
   }
 </style>
+<link rel="stylesheet" href="./styles/ui.css">
 </head>
 <body class="starting">
 <div id="app">
   <main>
     <section id="world-pane">
-      <canvas id="world"></canvas>
+      <canvas id="world" tabindex="0" aria-label="Mouse habitat. Click or tap the floor to guide your mouse, or use W A S D to drive."></canvas>
 
       <div id="hud" data-panel="hud">
         <div class="badge" id="state-badge">RESTING</div>
@@ -458,98 +459,135 @@
       </div>
     </section>
 
-    <aside id="brain-pane" aria-label="Simulation menu and brain panels">
+    <aside id="brain-pane" aria-label="Simulation controls">
       <header id="topbar">
-        <div class="brand"><span class="dot"></span>mylovely&#8209;mice<small>mouse &amp; brain simulator</small></div>
-        <div class="toolbar">
-          <button class="btn" id="b-cam" title="Switch between following the mouse, free orbit, and an overhead view (C)">camera: follow</button>
-          <button class="btn" id="b-value" title="Paint the floor with how valuable the mouse has learned each spot to be (V)">value map</button>
-          <button class="btn on" id="b-trail" title="Show where the mouse has been (T)">trail</button>
-          <button class="btn on" id="b-auto" title="Every mouse forages by itself. Turn this off to take the keys (O)">autopilot</button>
-          <button class="btn" id="b-report"
-            title="What has happened to every mouse, what is worth looking at, and a download of both (Y)">report</button>
-          <button class="btn" id="b-speed" title="Run the simulation faster than real time: 1x, 2x, 4x, 8x (. to cycle, , to go back to 1x)">speed 1×</button>
-          <span class="tdiv"></span>
-          <div class="menuwrap">
-            <button class="btn" id="b-panels" aria-expanded="false" aria-controls="panel-menu" title="Show or hide any panel">panels ▾</button>
-            <div class="menu" id="panel-menu" role="menu" aria-label="Visible panels" hidden></div>
-          </div>
-          <button class="btn" id="b-signals" title="Spectrum, band power, theta-gamma coupling, spike statistics and body signals (B)">signals</button>
-          <button class="btn" id="b-boxes"
-            title="Nine cages under different conditions, and the tunnels between them (J). K opens and shuts the tunnels.">nine cages</button>
-          <button class="btn" id="b-mortality"
-            title="Fighting, infanticide and the causes of death in a mouse colony (N)">mortality</button>
-          <button class="btn" id="b-optics" style="display:none"
-            title="Express an opsin in a region and stimulate it with light (G)">optogenetics</button>
-          <button class="btn" id="b-cue" title="Turn the white cue card. The head-direction compass turns with it - a real finding (M)">rotate cue</button>
-          <button class="btn" id="b-pause" title="Pause (P)">pause</button>
-          <button class="btn" id="b-reset" title="Start over (R)">reset</button>
-          <button class="btn ghost" id="b-help" title="What is this? (?)">?</button>
+        <div class="lab-brand">
+          <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><circle cx="8" cy="9" r="5" stroke="currentColor" stroke-width="1.6"/><circle cx="24" cy="9" r="5" stroke="currentColor" stroke-width="1.6"/><path d="M26 19c0 6-4.5 10-10 10S6 25 6 19 10.5 9 16 9s10 4 10 10Z" fill="#18342f" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="18" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/><path d="m14 23 2 2 2-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+          <div><strong>mylovely mice</strong><small>A living mouse &amp; brain lab</small></div>
         </div>
-        <details id="stats-card">
-          <summary>Live stats</summary>
-          <div class="stats" id="stats">
-            <div class="stat" title="Cheese eaten by the mouse you are driving"><label>cheese</label><b id="st-cheese">0</b></div>
-            <div class="stat" title="How fast it is moving. Mice walk at 5-15 cm/s and run up to ~45 cm/s."><label>speed</label><b id="st-speed">0<span>cm/s</span></b></div>
-            <div class="stat" title="Which way it faces, 0 degrees = north"><label>heading</label><b id="st-head">0<span>°</span></b></div>
-            <div class="stat" title="Theta rhythm in the hippocampus. It speeds up as the mouse runs faster - a real, measured relationship."><label>theta</label><b id="st-theta">6.7<span>Hz</span></b></div>
-            <div class="stat" title="Dopamine neuron firing. ~5 Hz at rest; it bursts when something is better than expected and pauses when it is worse."><label>dopamine</label><b id="st-da">5<span>Hz</span></b></div>
-            <div class="stat" title="How hungry it is right now"><label>hunger</label><b id="st-hunger">70<span>%</span></b></div>
-            <div class="stat" title="Total spikes per second across all 680 simulated neurons"><label>spikes</label><b id="st-spk">0<span>/s</span></b></div>
-            <div class="stat" title="Time since the session started"><label>session</label><b id="st-time">0:00</b></div>
-          </div>
-        </details>
+        <nav class="sidebar-tabs" role="tablist" aria-label="Sidebar sections">
+          <button id="tab-explore" type="button" role="tab" data-tab="explore" aria-controls="view-explore" aria-selected="true">Explore</button>
+          <button id="tab-brain" type="button" role="tab" data-tab="brain" aria-controls="view-brain" aria-selected="false" tabindex="-1">Brain</button>
+          <button id="tab-tools" type="button" role="tab" data-tab="tools" aria-controls="view-tools" aria-selected="false" tabindex="-1">Tools</button>
+        </nav>
       </header>
-      <div id="brain-panels" data-panel="sidebar">
-        <div class="pcard" id="brain-card" data-panel="brain">
-          <h4>the brain, live <em>Allen CCFv3</em></h4>
-          <div id="brain-wrap">
-            <canvas id="brain"></canvas>
-            <div id="brain-tip"></div>
-            <div id="brain-hint">click a region</div>
-          </div>
-        </div>
-
-        <div class="pcard" data-panel="busiest">
-          <h4>busiest right now <em>click to inspect</em></h4>
-          <div id="active-list"></div>
-        </div>
-
-        <div class="pcard" data-panel="region">
-          <h4>about this region</h4>
-          <div id="insp"></div>
-        </div>
-
-        <div class="pcard" data-panel="maps">
-          <h4>what the cells have learned <em>built live from spikes</em></h4>
-          <div id="maps">
-            <div class="mapcard">
-              <div class="cap"><span>place</span><b id="cap-place" title="Click for a different cell">#0</b></div>
-              <canvas id="map-place" title="Where this one hippocampal cell fires. Explore and a single bright patch appears - its place field."></canvas>
-              <div class="sub" id="sub-place">0.0 Hz peak</div>
+      <div class="sidebar-content">
+        <section id="view-explore" data-tab-panel="explore" role="tabpanel" aria-labelledby="tab-explore">
+          <div class="session-line"><span class="session-state" id="ui-session">Running</span><span class="mouse-meta" id="ui-population">26 mice</span><span class="session-clock" id="ui-clock">0:00</span></div>
+          <div class="mouse-card">
+            <div class="mouse-heading">
+              <div class="mouse-title"><div class="eyebrow">You’re watching</div><h2 id="ui-mouse">Your mouse</h2><div class="mouse-meta" id="ui-mouse-meta">Loading mouse…</div></div>
+              <button class="next-mouse" id="b-next-mouse" aria-label="Watch next mouse" title="Watch next mouse (X)">→</button>
             </div>
-            <div class="mapcard">
-              <div class="cap"><span>grid</span><b id="cap-grid" title="Click for a different cell">#0</b></div>
-              <canvas id="map-grid" title="An entorhinal grid cell. Explore long enough and its firing forms a repeating hexagonal lattice."></canvas>
-              <div class="sub" id="sub-grid">0.0 Hz peak</div>
+            <div class="mouse-location"><span id="ui-cage">Control cage</span><span id="ui-behavior">Exploring</span></div>
+            <div class="mouse-needs">
+              <div><label for="ui-hunger">Hunger <output id="ui-hunger-value">0%</output></label><meter id="ui-hunger" min="0" max="1" value="0"></meter></div>
+              <div class="thirst"><label for="ui-thirst">Thirst <output id="ui-thirst-value">0%</output></label><meter id="ui-thirst" min="0" max="1" value="0"></meter></div>
             </div>
-            <div class="mapcard">
-              <div class="cap"><span>compass</span><b id="cap-hd" title="Click for a different cell">#0</b></div>
-              <canvas id="polar-hd" title="A head-direction cell: it fires only when the mouse faces one way. White arrow = true heading."></canvas>
-              <div class="sub" id="sub-hd">tuning</div>
-            </div>
+            <button class="btn auto-control on" id="b-auto" aria-pressed="true" title="Let the mouse forage on its own, or take control (O)">Autopilot on</button>
           </div>
-        </div>
+          <p class="hint">Click or tap the floor to guide your mouse. Use <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> to drive.</p>
+          <section class="control-section" aria-labelledby="playback-title">
+            <h3 id="playback-title">Playback</h3>
+            <div class="playback">
+              <button class="btn primary" id="b-pause" aria-pressed="false" title="Pause or resume the simulation (P)">Pause</button>
+              <label class="field" for="b-speed">Simulation speed<select id="b-speed"><option value="1">1× · Real time</option><option value="2">2× · Faster</option><option value="4">4× · Fast</option><option value="8">8× · Fastest</option></select></label>
+            </div>
+          </section>
+          <section class="control-section" aria-labelledby="colony-title">
+            <h3 id="colony-title">Explore the colony</h3>
+            <div class="button-pair"><button class="btn" id="b-boxes" aria-pressed="false" title="Compare the nine cages and open their tunnels (J)">Nine cages</button><button class="btn" id="b-colony" aria-pressed="false">Choose mouse</button></div>
+          </section>
+          <section class="control-section" aria-labelledby="camera-title">
+            <h3 id="camera-title">Camera</h3>
+            <label class="field" for="b-cam"><span class="sr-only">Camera view</span><select id="b-cam"><option value="follow">Follow mouse</option><option value="orbit">Free orbit · Drag to rotate</option><option value="top">Overhead</option><option value="all nine">All nine cages</option></select></label>
+          </section>
+          <div class="guide-card"><span class="guide-icon" aria-hidden="true">✦</span><div><h3>Try connecting the cages</h3><p>Open Nine cages, then open the tunnels. Watch where the mice choose to go.</p><button class="text-button" id="b-help">How to explore →</button></div></div>
+          <details id="stats-card">
+            <summary>Live stats</summary>
+            <div class="stats" id="stats">
+              <div class="stat" title="Cheese eaten by the mouse you are driving"><label>cheese</label><b id="st-cheese">0</b></div>
+              <div class="stat" title="How fast it is moving. Mice walk at 5-15 cm/s and run up to ~45 cm/s."><label>speed</label><b id="st-speed">0<span>cm/s</span></b></div>
+              <div class="stat" title="Which way it faces, 0 degrees = north"><label>heading</label><b id="st-head">0<span>°</span></b></div>
+              <div class="stat" title="Theta rhythm in the hippocampus. It speeds up as the mouse runs faster - a real, measured relationship."><label>theta</label><b id="st-theta">6.7<span>Hz</span></b></div>
+              <div class="stat" title="Dopamine neuron firing. ~5 Hz at rest; it bursts when something is better than expected and pauses when it is worse."><label>dopamine</label><b id="st-da">5<span>Hz</span></b></div>
+              <div class="stat" title="How hungry it is right now"><label>hunger</label><b id="st-hunger">70<span>%</span></b></div>
+              <div class="stat" title="Total spikes per second across all 680 simulated neurons"><label>spikes</label><b id="st-spk">0<span>/s</span></b></div>
+              <div class="stat" title="Time since the session started"><label>session</label><b id="st-time">0:00</b></div>
+            </div>
+          </details>
+        </section>
+        <section id="view-brain" data-tab-panel="brain" role="tabpanel" aria-labelledby="tab-brain" hidden>
+          <div class="panel-intro"><h2>Inside the brain</h2><p>See what your mouse’s neurons are doing. Rotate the brain and select a region to explore.</p></div>
+          <div id="brain-panels">
+            <div class="pcard" id="brain-card" data-panel="brain">
+              <h4>the brain, live <em>Allen CCFv3</em></h4>
+              <div id="brain-wrap">
+                <canvas id="brain"></canvas>
+                <div id="brain-tip"></div>
+                <div id="brain-hint">click a region</div>
+              </div>
+            </div>
 
-        <div class="pcard folded" id="pop-card" data-panel="regions">
-          <h4 id="pop-head" style="cursor:pointer">all 37 regions <em id="pop-tw">show ▸</em></h4>
-          <div id="pop-body">
-            <div id="chips"></div>
-            <div id="pops"></div>
+            <div class="pcard" data-panel="busiest">
+              <h4>busiest right now <em>click to inspect</em></h4>
+              <div id="active-list"></div>
+            </div>
+
+            <div class="pcard" data-panel="region">
+              <h4>about this region</h4>
+              <div id="insp"></div>
+            </div>
+
+            <div class="pcard" data-panel="maps">
+              <h4>what the cells have learned <em>built live from spikes</em></h4>
+              <div id="maps">
+                <div class="mapcard">
+                  <div class="cap"><span>place</span><b id="cap-place" title="Click for a different cell">#0</b></div>
+                  <canvas id="map-place" title="Where this one hippocampal cell fires. Explore and a single bright patch appears - its place field."></canvas>
+                  <div class="sub" id="sub-place">0.0 Hz peak</div>
+                </div>
+                <div class="mapcard">
+                  <div class="cap"><span>grid</span><b id="cap-grid" title="Click for a different cell">#0</b></div>
+                  <canvas id="map-grid" title="An entorhinal grid cell. Explore long enough and its firing forms a repeating hexagonal lattice."></canvas>
+                  <div class="sub" id="sub-grid">0.0 Hz peak</div>
+                </div>
+                <div class="mapcard">
+                  <div class="cap"><span>compass</span><b id="cap-hd" title="Click for a different cell">#0</b></div>
+                  <canvas id="polar-hd" title="A head-direction cell: it fires only when the mouse faces one way. White arrow = true heading."></canvas>
+                  <div class="sub" id="sub-hd">tuning</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pcard folded" id="pop-card" data-panel="regions">
+              <h4 id="pop-head" style="cursor:pointer">All brain regions <em id="pop-tw">show ▸</em></h4>
+              <div id="pop-body">
+                <div id="chips"></div>
+                <div id="pops"></div>
+              </div>
+            </div>
           </div>
-        </div>
+        </section>
+        <section id="view-tools" data-tab-panel="tools" role="tabpanel" aria-labelledby="tab-tools" hidden>
+          <div class="panel-intro"><h2>Lab tools</h2><p>Look closer, try an experiment, or download what happened in your session.</p></div>
+          <div class="tool-list">
+            <button class="btn tool-button" id="b-signals" aria-pressed="false"><span>Neural signals<small>Brain waves, spike patterns &amp; body signals</small></span><kbd>B</kbd></button>
+            <button class="btn tool-button" id="b-optics" aria-pressed="false" style="display:none"><span>Optogenetics<small>Activate brain regions with light</small></span><kbd>G</kbd></button>
+            <button class="btn tool-button" id="b-mortality" aria-pressed="false"><span>Health &amp; survival<small>Fighting, stress &amp; causes of death</small></span><kbd>N</kbd></button>
+            <button class="btn tool-button" id="b-report" aria-pressed="false"><span>Session report<small>Review every mouse &amp; export PDF or CSV</small></span><kbd>Y</kbd></button>
+            <button class="btn tool-button" id="b-cue"><span>Rotate landmark<small>Turn the cue card by 90°</small></span><kbd>M</kbd></button>
+          </div>
+          <section class="control-section"><h3>View overlays</h3>
+            <div class="button-pair"><button class="btn on" id="b-trail" aria-pressed="true" title="Show the mouse’s path (T)">Path trail</button><button class="btn" id="b-value" aria-pressed="false" title="Show where the mouse has learned to find rewards (V)">Reward map</button></div>
+          </section>
+          <div class="menuwrap"><button class="btn" id="b-panels" aria-expanded="false" aria-controls="panel-menu">Customize panels ▾</button><div class="menu" id="panel-menu" role="menu" aria-label="Visible panels" hidden></div></div>
+          <div class="restart-section"><button class="btn ghost danger" id="b-reset">Restart session</button><p class="hint">Start fresh with all nine cages. Your current session will be cleared.</p></div>
+        </section>
       </div>
+      <div class="sidebar-footer"><button class="btn ghost" id="b-clean">Clean view</button><button class="text-button" id="b-shortcuts">Help &amp; shortcuts</button></div>
     </aside>
+    <div id="mobile-rail"><button id="b-mobile-menu" aria-label="Open controls" aria-controls="brain-pane" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h14" stroke-linecap="round"/></svg></button><span class="rail-label" aria-hidden="true">MOUSE LAB</span></div>
   </main>
 
   <footer id="footer">
@@ -573,11 +611,14 @@
   </footer>
 </div>
 
-<div id="welcome" class="hide">
+<button id="sidebar-backdrop" aria-label="Close controls"></button>
+
+<dialog id="welcome" aria-labelledby="welcome-title">
   <div class="wcard">
-    <h1><span class="dot"></span>mylovely-mice</h1>
+    <button class="dialog-close" id="welcome-close" aria-label="Close help">×</button>
+    <h1 id="welcome-title"><span class="dot"></span>Welcome to the mouse lab</h1>
     <p class="lede">Nine cages of mice, each kept under different conditions, every animal wired to a
-      working model of its own brain. Drive one around and the panels on the right show what its
+      working model of its own brain. Guide one around, then open the Brain tab to see what its
       neurons are doing, moment by moment.</p>
     <div class="wtry">
       <div><h3>1 · move</h3><p>Click anywhere on the floor to send the mouse there, or drive it
@@ -595,7 +636,13 @@
       <button class="wgo" id="welcome-start">Start exploring</button>
     </div>
   </div>
-</div>
+</dialog>
+
+<dialog id="reset-dialog" aria-labelledby="reset-title" aria-describedby="reset-description">
+  <div class="dialog-card"><h2 id="reset-title">Restart this session?</h2><p id="reset-description">All nine cages will start fresh. Your current session and its report will be cleared.</p>
+    <form method="dialog" class="dialog-actions"><button class="btn" value="cancel" autofocus>Keep exploring</button><button class="btn primary" value="restart">Restart session</button></form>
+  </div>
+</dialog>
 
 <script type="importmap">
 { "imports": {

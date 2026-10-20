@@ -12,7 +12,7 @@ overcrowded and one with plenty of everything. Open the tunnels and the colony
 redistributes itself — and the hippocampus of every animal that crosses builds
 a new map for the cage it has arrived in.
 
-![arena and brain panels](docs/screenshot.png)
+![platform with the Explore sidebar](docs/screenshot.png)
 
 ## Running it
 
@@ -27,11 +27,16 @@ python3 -m http.server 8000
 Three.js and its controls are included in `vendor/`. All runtime files are
 served by the site itself, with no CDN dependency and no backend to keep running.
 
-The default view is the platform and right sidebar. Controls live in the sidebar,
-with **Live stats** collapsed below them. Floating panels, status badges, the
-scale bar and bottom charts start hidden; the introduction opens with **?**.
-Use **panels → clean view** to restore this layout, or enable individual panels.
-The browser remembers your choices.
+The default view is the platform and right sidebar. **Explore** shows the selected
+mouse, its needs, playback and camera controls. **Brain** holds the live anatomy,
+region details and learned maps. **Tools** holds experiments, reports and
+**Customize panels**. On phones, use the menu button on the right to open controls.
+
+Floating panels, status badges, the scale bar and bottom charts start hidden.
+**Clean view** restores this layout; **Help & shortcuts** explains how to explore.
+The nine cages panel opens in the platform’s top-left corner, and floating panels
+have close and collapse controls. Restarting a session asks for confirmation.
+The browser remembers your panel choices.
 
 ### On GitHub Pages
 
@@ -51,7 +56,7 @@ Pages is already enabled for this repository. For a new fork, select
 No hosting server, secrets, or scheduled keep-alive jobs are needed.
 
 [`.github/scripts/package-site.mjs`](.github/scripts/package-site.mjs) stages
-`index.html`, `src/`, `data/`, `vendor/` and `.nojekyll` in `dist/`. Only those
+`index.html`, `src/`, `styles/`, `data/`, `vendor/` and `.nojekyll` in `dist/`. Only those
 public runtime files are uploaded.
 
 Every path in the page is relative, so it works from the `/mylovely-mice/`

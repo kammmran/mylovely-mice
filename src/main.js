@@ -24,6 +24,7 @@ import { BrainView } from './view/brainview.js';
 import { Raster, Trace, drawRateMap, drawPolar } from './view/plots.js';
 import { mountSignals } from './view/signalspanel.js';
 import { SLOT } from './view/palette.js';
+import { mountInterface } from './view/interface.js';
 import { ROLES, ORDER, GROUPS } from './neuro/regions.js';
 
 const $ = (id) => document.getElementById(id);
@@ -980,7 +981,7 @@ function cycleSpeed(to) {
   simSpeed = to || SPEEDS[(SPEEDS.indexOf(simSpeed) + 1) % SPEEDS.length];
   const b = $('b-speed');
   if (b) {
-    b.textContent = `speed ${simSpeed}\u00d7`;
+    b.value = String(simSpeed);
     b.classList.toggle('on', simSpeed > 1);
   }
   logEvent('state', simSpeed === 1
@@ -991,14 +992,15 @@ let camMode = 'follow';
 const CAM_MODES = ['follow', 'orbit', 'top', 'all nine'];
 
 addEventListener('keydown', (e) => {
-  if (e.target instanceof HTMLInputElement) return;
   const k = e.key.toLowerCase();
+  if (e.defaultPrevented || e.target.closest('input,select,textarea,[contenteditable="true"]') || document.querySelector('dialog[open]')) return;
+  if (e.target.closest('button,summary,[role="button"]') && ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'enter', 'home', 'end'].includes(k)) return;
   if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
   if (keys[k]) return;
   keys[k] = true;
   if (k === 'c') cycleCamera();
   if (k === 'p') togglePause();
-  if (k === 'r') doReset();
+  if (k === 'r') requestReset();
   if (k === 'v') toggleValue();
   if (k === 't') toggleTrail();
   if (k === 'h') toggleHelp();
@@ -1090,12 +1092,11 @@ for (const k of Object.keys(DRIVE_BTN)) $(DRIVE_BTN[k]).onclick = () => toggleDr
 // ----------------------------------------------------------------- panels
 /** Every panel can be shown or hidden, and the layout closes up around it. */
 const PANELS = [
-  { key: 'sidebar', label: 'brain panels', group: 'layout' },
-  { key: 'brain', label: 'the brain, live', group: 'side panel' },
-  { key: 'busiest', label: 'busiest right now', group: 'side panel' },
-  { key: 'region', label: 'about this region', group: 'side panel' },
-  { key: 'maps', label: 'what the cells have learned', group: 'side panel' },
-  { key: 'regions', label: 'all 37 regions', group: 'side panel' },
+  { key: 'brain', label: 'Live brain', group: 'side panel' },
+  { key: 'busiest', label: 'Most active regions', group: 'side panel' },
+  { key: 'region', label: 'Region details', group: 'side panel' },
+  { key: 'maps', label: 'Learned maps', group: 'side panel' },
+  { key: 'regions', label: 'All regions', group: 'side panel' },
   { key: 'spikes', label: 'spike raster', group: 'along the bottom' },
   { key: 'waves', label: 'brain waves', group: 'along the bottom' },
   { key: 'reward', label: 'reward traces', group: 'along the bottom' },
@@ -1132,6 +1133,7 @@ function applyPanels() {
   mortality.open(shown('mortality'));
   $('b-boxes').classList.toggle('on', shown('boxes'));
   $('b-mortality').classList.toggle('on', shown('mortality'));
+  $('b-colony').classList.toggle('on', shown('colony'));
   // the bottom strip closes up as its cells go away
   const anyTrace = shown('waves') || shown('reward');
   const tr = $('trace-right');
@@ -1154,7 +1156,7 @@ function buildPanelMenu() {
     if (p.group !== group) {
       group = p.group;
       const h = document.createElement('h6');
-      h.textContent = group;
+      h.textContent = { 'side panel': 'Brain tab', 'along the bottom': 'Bottom charts', 'over the arena': 'On the platform' }[group] || group;
       m.appendChild(h);
     }
     const row = document.createElement('button');
@@ -1175,14 +1177,7 @@ function buildPanelMenu() {
     return b;
   };
   foot.appendChild(btn('show all', () => { for (const p of PANELS) panelOn[p.key] = true; }));
-  foot.appendChild(btn('clean view', () => {
-    Object.assign(panelOn, defaultPanelOn);
-    signals?.open(false);
-    optics.open?.(false);
-    toggleReport(false);
-    syncSignalsBtn();
-    $('stats-card').open = false;
-  }));
+  foot.appendChild(btn('clean view', restoreCleanView));
   m.appendChild(foot);
 }
 
@@ -1193,6 +1188,15 @@ function togglePanelMenu(force) {
   $('b-panels').classList.toggle('on', open);
   $('b-panels').setAttribute('aria-expanded', String(open));
   if (open) buildPanelMenu();
+}
+function restoreCleanView() {
+  Object.assign(panelOn, defaultPanelOn);
+  signals?.open(false);
+  optics.open?.(false);
+  toggleReport(false);
+  syncSignalsBtn();
+  $('stats-card').open = false;
+  applyPanels();
 }
 $('b-panels').onclick = (e) => { e.stopPropagation(); togglePanelMenu(); };
 document.addEventListener('click', () => togglePanelMenu(false));
@@ -1209,7 +1213,7 @@ for (const h of document.querySelectorAll('.pcard > h4')) {
 // ----------------------------------------------------------------- toolbar
 function cycleCamera(to) {
   camMode = to || CAM_MODES[(CAM_MODES.indexOf(camMode) + 1) % CAM_MODES.length];
-  $('b-cam').textContent = `camera: ${camMode}`;
+  $('b-cam').value = camMode;
   controls.enabled = camMode === 'orbit';
   const overhead = camMode === 'top' || camMode === 'all nine';
   camera.up.set(0, overhead ? 0 : 1, overhead ? 1 : 0);
@@ -1226,7 +1230,7 @@ function cycleCamera(to) {
 function togglePause() {
   paused = !paused;
   $('b-pause').classList.toggle('on', paused);
-  $('b-pause').textContent = paused ? 'paused' : 'pause';
+  $('b-pause').textContent = paused ? 'Resume' : 'Pause';
 }
 function toggleValue() {
   arena.valueMesh.visible = !arena.valueMesh.visible;
@@ -1263,7 +1267,16 @@ function toggleHelp() {
   $('keys').toggleAttribute('data-collapsed');
 }
 function showWelcome(on) {
-  $('welcome').classList.toggle('hide', !on);
+  const dialog = $('welcome');
+  if (on && !dialog.open) dialog.showModal();
+  if (!on && dialog.open) dialog.close();
+}
+function requestReset() {
+  const dialog = $('reset-dialog');
+  if (!dialog.open) {
+    dialog.returnValue = '';
+    dialog.showModal();
+  }
 }
 function rotateCue() {
   arena.rotateCue(Math.PI / 2);
@@ -1320,11 +1333,11 @@ function doReset() {
 }
 if ($('b-mortality')) $('b-mortality').onclick = () => toggleMortality();
 if ($('b-boxes')) $('b-boxes').onclick = () => toggleBoxes();
-if ($('b-speed')) $('b-speed').onclick = () => cycleSpeed();
+if ($('b-speed')) $('b-speed').onchange = (e) => cycleSpeed(Number(e.target.value));
 if ($('b-report')) $('b-report').onclick = () => toggleReport();
-$('b-cam').onclick = () => cycleCamera();
+$('b-cam').onchange = (e) => cycleCamera(e.target.value);
 $('b-pause').onclick = togglePause;
-$('b-reset').onclick = doReset;
+$('b-reset').onclick = requestReset;
 $('b-value').onclick = toggleValue;
 $('b-trail').onclick = toggleTrail;
 $('b-help').onclick = () => showWelcome(true);
@@ -2237,6 +2250,7 @@ function updateHud() {
 }
 
 function updateHudInner() {
+  ui.update();
   const ag = A(), brain = ag.brain, m = ag.mouse;
   const vcm = m.speed * 100;
   $('st-cheese').textContent = brain.cheeseCount;
@@ -2333,6 +2347,24 @@ $('welcome').onclick = (e) => { if (e.target === $('welcome')) showWelcome(false
 
 applyPanels();
 buildPanelMenu();
+
+const ui = mountInterface({
+  getState: () => ({ agent: A(), population: agents.filter((ag) => !ag.dead).length,
+    time: fmtTime(sessionT), paused, speed: simSpeed }),
+  nextMouse: () => {
+    for (let offset = 1; offset <= agents.length; offset++) {
+      const index = (player + offset) % agents.length;
+      if (!agents[index].dead) { takeControl(index); break; }
+    }
+  },
+  togglePanel: (key, force) => {
+    panelOn[key] = force ?? !shown(key);
+    applyPanels();
+  },
+  restart: doReset,
+  cleanView: restoreCleanView,
+  resize,
+});
 
 setLight(0.35);
 setWater(0);

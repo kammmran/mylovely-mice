@@ -74,7 +74,7 @@ const clean = async () => {
   for (const selector of ['#welcome', '#footer', '#hud', '#scalebar']) {
     if (await visible(selector)) fail.push(`clean view shows ${selector}`);
   }
-  if (!await visible('#topbar') || !await visible('#brain-card')) fail.push('right sidebar is missing');
+  if (!await visible('#topbar') || !await visible('#ui-mouse')) fail.push('Explore sidebar is missing');
   const world = await page.locator('#world').boundingBox();
   const menu = await page.locator('#topbar').boundingBox();
   if (!world || !menu || world.y !== 0 || world.height < 790 || menu.x < world.x + world.width - 1) {
@@ -88,18 +88,54 @@ if (fail.length || errors.length) {
   process.exit(1);
 }
 console.log('The simulation runs with a clean platform and right sidebar');
+if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
+
+const currentMouse = await page.locator('#ui-mouse').textContent();
+await page.click('#b-next-mouse');
+await page.waitForFunction((name) => document.getElementById('ui-mouse').textContent !== name, currentMouse);
+await page.click('#b-pause');
+await page.waitForFunction(() => document.getElementById('b-pause').textContent === 'Resume');
+const pausedTime = await page.locator('#ui-clock').textContent();
+await page.selectOption('#b-speed', '2');
+await page.selectOption('#b-speed', '1');
+await page.click('#b-auto');
+await page.waitForFunction(() => document.getElementById('b-auto').getAttribute('aria-pressed') === 'false');
+await page.click('#b-auto');
 
 for (const mode of ['orbit', 'top', 'all nine', 'follow']) {
-  await page.click('#b-cam');
-  if (await page.locator('#b-cam').textContent() !== `camera: ${mode}`) fail.push(`camera did not switch to ${mode}`);
+  await page.selectOption('#b-cam', mode);
+  if (await page.locator('#b-cam').inputValue() !== mode) fail.push(`camera did not switch to ${mode}`);
 }
+
+await page.getByRole('tab', { name: 'Brain', exact: true }).click();
+if (!await visible('#brain-card')) fail.push('Brain tab did not reveal the anatomy');
+if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT.replace('.png', '-brain.png') });
+await page.getByRole('tab', { name: 'Tools', exact: true }).click();
+await page.click('#b-reset');
+if (!await visible('#reset-dialog')) fail.push('Restart did not show a confirmation');
+await page.getByRole('button', { name: 'Keep exploring', exact: true }).click();
+if (await page.locator('#ui-clock').textContent() !== pausedTime) fail.push('Canceling restart changed the paused session');
+await page.click('#b-reset');
+await page.locator('#reset-dialog').getByRole('button', { name: 'Restart session', exact: true }).click();
+await page.waitForFunction(() => document.getElementById('ui-clock').textContent === '0:00');
+await page.evaluate(() => { window.mouseBeforeCancel = window.sim.agents[0]; });
+await page.click('#b-reset');
+await page.keyboard.press('Escape');
+if (!await page.evaluate(() => window.mouseBeforeCancel === window.sim.agents[0])) fail.push('Escape restarted the session after a previous confirmation');
+await page.click('#b-shortcuts');
+if (!await visible('#welcome')) fail.push('Help dialog did not open');
+await page.keyboard.press('r');
+if (!await page.evaluate(() => window.mouseBeforeCancel === window.sim.agents[0])) fail.push('A simulation shortcut ran inside the help dialog');
+await page.keyboard.press('Escape');
+if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT.replace('.png', '-tools.png') });
 
 // Optional panels must open on the first click, close, and stay in sync with
 // both the Panels menu and the toolbar.
-for (const [button, card] of [['#b-boxes', '#boxes'], ['#b-mortality', '#mortality']]) {
+for (const [tab, button, card] of [['Explore', '#b-boxes', '#boxes'], ['Tools', '#b-mortality', '#mortality']]) {
+  await page.getByRole('tab', { name: tab, exact: true }).click();
   await page.click(button);
   if (!await visible(card)) fail.push(`${card} did not open on the first click`);
-  await page.click(button);
+  await page.locator(`${card} .panel-close`).click();
   if (await visible(card)) fail.push(`${card} did not close`);
 }
 await page.click('#b-panels');
@@ -108,25 +144,40 @@ if (!await visible('#feed')) fail.push('event feed did not open from the Panels 
 await page.reload({ waitUntil: 'load' });
 await page.waitForFunction(() => !!window.sim);
 if (!await visible('#feed')) fail.push('panel choice was not remembered after reload');
+await page.getByRole('tab', { name: 'Tools', exact: true }).click();
 await page.click('#b-panels');
 await page.getByRole('button', { name: 'show all', exact: true }).click();
 if (!await visible('#footer')) fail.push('show all did not restore the bottom charts');
-await page.getByRole('button', { name: 'clean view', exact: true }).click();
+await page.click('#b-clean');
 await page.keyboard.press('Escape');
 await clean();
 
-if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT });
 await page.setViewportSize({ width: 390, height: 844 });
 const mobileWorld = await page.locator('#world').boundingBox();
-const mobileMenu = await page.locator('#topbar').boundingBox();
-if (!mobileWorld || mobileWorld.width < 200 || !mobileMenu || mobileMenu.x + mobileMenu.width > 391) {
-  fail.push('narrow screen clips the platform or right menu');
+if (!mobileWorld || mobileWorld.width < 300 || await page.locator('#b-mobile-menu').getAttribute('aria-expanded') !== 'false') {
+  fail.push('narrow screen does not start with a clear platform and collapsed controls');
 }
+await page.click('#b-mobile-menu');
+await page.getByRole('tab', { name: 'Tools', exact: true }).click();
+const mobileMenu = await page.locator('#brain-pane').boundingBox();
 await page.click('#b-panels');
 const panelMenu = await page.locator('#panel-menu').boundingBox();
-if (!panelMenu || panelMenu.x < mobileMenu.x || panelMenu.x + panelMenu.width > 391) {
-  fail.push('narrow screen clips the Panels dropdown');
+if (!panelMenu || !mobileMenu || panelMenu.x < mobileMenu.x || panelMenu.x + panelMenu.width > mobileMenu.x + mobileMenu.width) {
+  fail.push('narrow screen clips the panel controls');
 }
+await page.click('#b-clean');
+const mobileMouse = await page.locator('#ui-mouse').boundingBox();
+const mobileHeader = await page.locator('#topbar').boundingBox();
+if (!mobileMouse || mobileMouse.y < mobileHeader.y + mobileHeader.height) fail.push('Switching tabs left the selected mouse scrolled behind the header');
+if (process.env.SCREENSHOT) await page.screenshot({ path: process.env.SCREENSHOT.replace('.png', '-mobile.png') });
+await page.keyboard.press('Escape');
+if (await page.locator('#b-mobile-menu').getAttribute('aria-expanded') !== 'false') fail.push('Escape did not close the mobile menu');
+await page.click('#b-mobile-menu');
+await page.click('#b-boxes');
+if (await page.locator('#b-mobile-menu').getAttribute('aria-expanded') !== 'false') fail.push('Opening a mobile panel did not dismiss the controls');
+const cages = await page.locator('#boxes').boundingBox();
+if (!cages || cages.x !== 12 || cages.y !== 12 || cages.x + cages.width > mobileWorld.width) fail.push('Mobile cage panel is outside the platform corner');
+await page.locator('#boxes .panel-close').click();
 for (const e of errors) fail.push(e);
 
 console.log(JSON.stringify({ ...state, pulse: `${before}  ->  ${later}` }, null, 1));
