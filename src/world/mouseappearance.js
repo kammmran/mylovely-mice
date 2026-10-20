@@ -1,10 +1,7 @@
 import * as THREE from 'three';
 
-export const COATS = [
-  { fur: 0x8b7b67, belly: 0xcfc3ae }, { fur: 0x686b70, belly: 0xbfc1c1 },
-  { fur: 0x49433d, belly: 0xaaa192 }, { fur: 0xc8b697, belly: 0xe7ddc8 },
-  { fur: 0xe2dfd5, belly: 0xf0ece2 }, { fur: 0x716354, belly: 0xc4b9a6 },
-];
+import { COAT_ALLELES } from './genetics.js';
+export const COATS = COAT_ALLELES;
 
 let furMap, tailMap;
 export function mouseTorsoGeometry(segments = 28) {

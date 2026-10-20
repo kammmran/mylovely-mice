@@ -97,7 +97,7 @@ export class Litter {
   }
 
   // ------------------------------------------------------------------ birth
-  birth(n, mother, owner) {
+  birth(n, mother, owner, offspring = []) {
     if (!this.nest) this.makeNest({ x: mother.x, z: mother.z });
     const out = [];
     for (let i = 0; i < n; i++) {
@@ -105,7 +105,7 @@ export class Litter {
       const r = Math.random() * NEST_R * 0.55;
       const pup = this.addPup(this.nest.x + Math.cos(a) * r, this.nest.z + Math.sin(a) * r);
       // sex is settled at conception; it decides what it grows into
-      pup.sex = Math.random() < 0.5 ? 'M' : 'F';
+      pup.sex = offspring[i]?.sex || (Math.random() < .5 ? 'M' : 'F');
       pup.owner = owner || null;
       out.push(pup);
     }
@@ -183,9 +183,9 @@ export class Litter {
       // growth: naked and pink, then furred, then eyes open
       const grow = 1 + Math.min(1, days / WEANING * DAY / DAY) * 0;
       const scale = 1 + Math.min(1.1, days / 21 * 1.1);
-      p.mesh.scale.setScalar(scale);
+      p.mesh.scale.setScalar(scale * (p.geneticScale || 1));
       const fur = Math.min(1, Math.max(0, (days - 3) / 6));
-      p.mat.color.copy(PINK).lerp(FURRY, fur).lerp(COLD, p.dead ? 0.85 : p.chill * 0.8);
+      p.mat.color.copy(PINK).lerp(p.fur || FURRY, fur).lerp(COLD, p.dead ? 0.85 : p.chill * 0.8);
       if (!p.eyes && p.age >= EYES_OPEN) this.openEyes(p);
 
       const fromNest = this.nest ? Math.hypot(p.x - this.nest.x, p.z - this.nest.z) : 0;
@@ -270,6 +270,7 @@ export class Litter {
   die(p, cause) {
     if (p.dead) return;
     p.dead = true;
+    if (p.genetics) { p.genetics.alive = false; p.genetics.diedAt = p.genetics.bornAt + p.age; }
     p.deadT = 0;
     p.calling = 0;
     p.carried = null;

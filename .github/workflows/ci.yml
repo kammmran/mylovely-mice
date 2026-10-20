@@ -53,6 +53,9 @@ jobs:
       - name: predator perception and defense
         run: node .github/scripts/check-threats.mjs
 
+      - name: inheritance, world layouts and colony scaling
+        run: node .github/scripts/check-genetics.mjs
+
   # The checks above cannot see a module that parses, imports cleanly and then
   # throws the moment it is evaluated. This one loads the page for real.
   smoke:

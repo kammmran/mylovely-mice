@@ -27,11 +27,11 @@ const RULES = [
   function behaviouralSink(d) {
     if (!d.grid.open || d.crossings < 5) return null;
     const s = d.sink;
-    if (!s.total || s.share < 0.2) return null;
+    if (!s.total || s.share < Math.max(.2, (s.even || 1 / d.grid.boxes.length) * 1.5)) return null;
     const links = s.box.links.length;
     return {
       head: `<b>${pct(s.share)}</b> of the colony is in one cage — ${s.box.cond.name}, which has ${links} tunnels`,
-      body: `An even spread across nine cages would be 11%. Calhoun found the same thing in 1962: `
+      body: `An even spread across ${d.grid.boxes.length} cages would be ${pct(1 / d.grid.boxes.length)}. Calhoun found the same thing in 1962: `
           + `connect pens with ramps and the animals stop spreading out and pile into the ones with `
           + `the most connections. He called it the behavioural sink, and the crowding pathology `
           + `followed from the aggregation rather than from any shortage.`,
@@ -53,7 +53,7 @@ const RULES = [
     if (d.grid.open || d.sessionT < 60) return null;
     return {
       head: 'the tunnels have not been opened yet',
-      body: `Nine separate experiments are running side by side. Press K and they become one `
+      body: `${d.grid.boxes.length} separate cages are running side by side. Press K and they become one `
           + `connected colony — which is the experiment Calhoun was actually doing.`,
       ref: null,
     };
@@ -538,7 +538,7 @@ function pdf(d, options = {}) {
         ['theta', `${br.theta.toFixed(1)} Hz`],
         ['dopamine', `${br.dopamine.toFixed(1)} Hz`],
         ['learned value V(s)', br.value.toFixed(3)],
-        ['maps held', `${m.maps} of nine cages`],
+        ['maps held', `${m.maps} of ${d.grid.boxes.length} cages`],
         ['population rate', br.detail > 0 ? `${(br.spikes / 1000).toFixed(1)} k spikes/s` : 'not sampled'],
         ['alive', br.alive ? 'yes' : 'no'],
       ], 2);

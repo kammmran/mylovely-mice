@@ -15,12 +15,14 @@ import { checkReport } from './report-smoke.mjs';
 import { checkMouseBehavior } from './behavior-smoke.mjs';
 import { checkThreatBehavior } from './threat-smoke.mjs';
 import { checkAnatomy } from './anatomy-smoke.mjs';
+import { checkGenetics } from './genetics-smoke.mjs';
 
 const URL_BASE = process.env.URL || 'http://localhost:8777';
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_EXECUTABLE_PATH || undefined,
 });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+// Preserve CSS layout and interactions while reducing software WebGL pixel work.
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: .5 });
 
 // Returning visitors must also get the new defaults instead of the old busy
 // layout. New choices in mlm-panels-v2 are checked across a reload below.
@@ -232,6 +234,7 @@ if (!mobileAnatomy || mobileAnatomy.x < 12 || mobileAnatomy.x + mobileAnatomy.wi
   fail.push('Mobile anatomy popup did not stay inside the platform with the drawer closed');
 }
 await page.locator('#anatomy .panel-close').click();
+await checkGenetics(page);
 for (const e of errors) fail.push(e);
 
 console.log(JSON.stringify({ ...state, pulse: `${before}  ->  ${later}` }, null, 1));

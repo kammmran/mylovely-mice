@@ -376,6 +376,7 @@
 <link rel="stylesheet" href="./styles/ui.css">
 <link rel="stylesheet" href="./styles/report.css">
 <link rel="stylesheet" href="./styles/anatomy.css">
+<link rel="stylesheet" href="./styles/genetics.css">
 </head>
 <body class="starting">
 <div id="app">
@@ -457,7 +458,7 @@
           <kbd>B</kbd> signals &nbsp; <kbd>G</kbd> optogenetics<br>
           <kbd>[</kbd><kbd>]</kbd> light &nbsp; <kbd>-</kbd><kbd>=</kbd> water &nbsp; <kbd>M</kbd> cue<br>
           <kbd>1</kbd>–<kbd>6</kbd> threats &nbsp; <kbd>0</kbd> remove stimuli<br>
-          <kbd>N</kbd> mortality &nbsp; <kbd>J</kbd> nine cages &nbsp; <kbd>K</kbd> tunnels<br>
+          <kbd>N</kbd> mortality &nbsp; <kbd>J</kbd> cages &nbsp; <kbd>K</kbd> tunnels<br>
           <kbd>.</kbd> faster &nbsp; <kbd>,</kbd> real time &nbsp; <kbd>Y</kbd> report<br>
           <kbd>P</kbd> pause &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>?</kbd> help
         </div>
@@ -511,14 +512,16 @@
           </section>
           <section class="control-section" aria-labelledby="colony-title">
             <h3 id="colony-title">Explore the colony</h3>
-            <div class="button-pair"><button class="btn" id="b-boxes" aria-pressed="false" title="Compare the nine cages and open their tunnels (J)">Nine cages</button><button class="btn" id="b-colony" aria-pressed="false">Choose mouse</button></div>
+            <div class="button-pair"><button class="btn" id="b-boxes" aria-pressed="false" title="Compare the cages and open their tunnels (J)">Cages</button><button class="btn" id="b-colony" aria-pressed="false">Choose mouse</button></div>
             <button class="btn" id="b-anatomy" aria-pressed="false" style="width:100%;margin-top:8px">Mouse anatomy</button>
+            <button class="btn" id="b-genetics" aria-pressed="false" style="width:100%;margin-top:8px">Genetics &amp; families</button>
+            <button class="btn" id="b-colony-setup" aria-pressed="false" style="width:100%;margin-top:8px">Colony setup</button>
           </section>
           <section class="control-section" aria-labelledby="camera-title">
             <h3 id="camera-title">Camera</h3>
-            <label class="field" for="b-cam"><span class="sr-only">Camera view</span><select id="b-cam"><option value="follow">Follow mouse</option><option value="orbit">Free orbit · Drag to rotate</option><option value="top">Overhead</option><option value="all nine">All nine cages</option></select></label>
+            <label class="field" for="b-cam"><span class="sr-only">Camera view</span><select id="b-cam"><option value="follow">Follow mouse</option><option value="orbit">Free orbit · Drag to rotate</option><option value="top">Overhead</option><option value="all nine">All cages</option></select></label>
           </section>
-          <div class="guide-card"><span class="guide-icon" aria-hidden="true">✦</span><div><h3>Try connecting the cages</h3><p>Open Nine cages, then open the tunnels. Watch where the mice choose to go.</p><button class="text-button" id="b-help">How to explore →</button></div></div>
+          <div class="guide-card"><span class="guide-icon" aria-hidden="true">✦</span><div><h3>Try connecting the cages</h3><p>Open Cages, then open the tunnels. Watch where the mice choose to go.</p><button class="text-button" id="b-help">How to explore →</button></div></div>
           <details id="stats-card">
             <summary>Live stats</summary>
             <div class="stats" id="stats">
@@ -598,7 +601,7 @@
             <div class="button-pair"><button class="btn on" id="b-trail" aria-pressed="true" title="Show the mouse’s path (T)">Path trail</button><button class="btn" id="b-value" aria-pressed="false" title="Show where the mouse has learned to find rewards (V)">Reward map</button></div>
           </section>
           <div class="menuwrap"><button class="btn" id="b-panels" aria-expanded="false" aria-controls="panel-menu" aria-haspopup="dialog">Customize panels ▾</button></div>
-          <div class="restart-section"><button class="btn ghost danger" id="b-reset">Restart session</button><p class="hint">Start fresh with all nine cages. Your current session will be cleared.</p></div>
+          <div class="restart-section"><button class="btn ghost danger" id="b-reset">Restart session</button><p class="hint">Start fresh with all cages. Your current session will be cleared.</p></div>
         </section>
       </div>
       <div class="sidebar-footer"><button class="btn ghost" id="b-clean">Clean view</button><button class="text-button" id="b-shortcuts">Help &amp; shortcuts</button></div>
@@ -633,7 +636,7 @@
   <div class="wcard">
     <button class="dialog-close" id="welcome-close" aria-label="Close help">×</button>
     <h1 id="welcome-title"><span class="dot"></span>Welcome to the mouse lab</h1>
-    <p class="lede">Nine cages of mice, each kept under different conditions, every animal wired to a
+    <p class="lede">Cages of mice, each kept under different conditions, every animal wired to a
       working model of its own brain. Guide one around, then open the Brain tab to see what its
       neurons are doing, moment by moment.</p>
     <div class="wtry">
@@ -643,7 +646,7 @@
         then fade as the mouse learns where to look.</p></div>
       <div><h3>3 · stand still</h3><p>Stop moving and the hippocampus <b>replays the path you just
         took</b>, backwards, in a fraction of a second.</p></div>
-      <div><h3>4 · open the tunnels</h3><p><kbd>K</kbd> connects all nine cages. Watch where they go —
+      <div><h3>4 · open the tunnels</h3><p><kbd>K</kbd> connects all cages. Watch where they go —
         and watch the place cells <b>remap</b> as one crosses.</p></div>
     </div>
     <div class="wfoot">
@@ -655,7 +658,7 @@
 </dialog>
 
 <dialog id="reset-dialog" aria-labelledby="reset-title" aria-describedby="reset-description">
-  <div class="dialog-card"><h2 id="reset-title">Restart this session?</h2><p id="reset-description">All nine cages will start fresh. Your current session and its report will be cleared.</p>
+  <div class="dialog-card"><h2 id="reset-title">Restart this session?</h2><p id="reset-description">All cages will start fresh. Your current session and its report will be cleared.</p>
     <form method="dialog" class="dialog-actions"><button class="btn" value="cancel" autofocus>Keep exploring</button><button class="btn primary" value="restart">Restart session</button></form>
   </div>
 </dialog>

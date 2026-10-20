@@ -143,14 +143,27 @@ export class ProxyHerd {
       mesh.castShadow = true; mesh.frustumCulled = false; mesh.count = 0; scene.add(mesh);
     }
     [...coats, ...details].forEach((part) => part.dispose());
-    this.max = max;
+    this.scene = scene; this.max = max;
     this.dummy = new THREE.Object3D();
     this.colorsSet = new WeakSet();
   }
 
+  ensureCapacity(count) {
+    if (count <= this.max) return;
+    const capacity = Math.max(count, this.max * 2);
+    for (const key of ['mesh', 'details']) {
+      const old = this[key], mesh = new THREE.InstancedMesh(old.geometry, old.material, capacity);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.castShadow = true; mesh.frustumCulled = false; mesh.count = 0;
+      this.scene.remove(old); old.dispose(); this.scene.add(mesh); this[key] = mesh;
+    }
+    this.max = capacity;
+  }
+
   /** @param bodies array of ProxyBody, each with a .furColor and .scale */
   sync(bodies) {
-    const n = Math.min(bodies.length, this.max);
+    this.ensureCapacity(bodies.length);
+    const n = bodies.length;
     const d = this.dummy;
     for (let i = 0; i < n; i++) {
       const b = bodies[i];

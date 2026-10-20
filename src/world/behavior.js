@@ -1,3 +1,4 @@
+import { SpatialIndex } from './spatial.js';
 /** Local resource memory and short, interruptible behavioral bouts.
  * Timings and utility weights are simulation parameters, not fitted measurements.
  */
@@ -155,8 +156,8 @@ export function steerMouse(ag, goal, out, urgency = .5) {
   let dx = goal.x - m.x, dz = goal.z - m.z;
   const dist = Math.hypot(dx, dz);
   let vx = dx / Math.max(dist, .001), vz = dz / Math.max(dist, .001);
-  for (const other of ag.box.agents || []) {
-    if (other === ag || other.dead) continue;
+  for (const other of ag.box.spatial?.nearby(m.x, m.z, .12) || ag.box.agents || []) {
+    if (other === ag || other.dead || other.box !== ag.box) continue;
     const ox = m.x - other.mouse.x, oz = m.z - other.mouse.z;
     const gap = Math.hypot(ox, oz);
     if (gap < .11 && gap > .001 && dist > .05) {
@@ -189,8 +190,10 @@ export function steerMouse(ag, goal, out, urgency = .5) {
 /** Resolve body overlap locally, including proxies and juveniles. */
 export function separateMice(box) {
   const mice = box.agents.filter((ag) => !ag.dead);
-  for (let i = 0; i < mice.length; i++) for (let j = i + 1; j < mice.length; j++) {
-    const a = mice[i].mouse, b = mice[j].mouse;
+  const index = (box.spatial ||= new SpatialIndex()).rebuild(box), order = new Map(mice.map((ag, i) => [ag, i]));
+  for (let i = 0; i < mice.length; i++) for (const other of index.nearby(mice[i].mouse.x, mice[i].mouse.z, .06)) {
+    if ((order.get(other) ?? -1) <= i) continue;
+    const a = mice[i].mouse, b = other.mouse;
     let dx = b.x - a.x, dz = b.z - a.z, gap = Math.hypot(dx, dz);
     const min = .036 * ((a.root.scale.x || 1) + (b.root.scale.x || 1)) / 2;
     if (gap >= min) continue;

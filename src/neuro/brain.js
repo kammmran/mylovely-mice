@@ -102,9 +102,9 @@ class Population {
     this.mapped = !!opts.mapped;       // accumulate 2-D rate maps?
     this.peakNorm = !!opts.peakNorm;   // sparse code: normalise by the best cell
     this.weight = opts.weight ?? 1;    // contribution to its region's activation
-    if (this.mapped) this.spikeMap = new Float32Array(n * BINS * BINS);
+    this.spikeMap = null;
     if (opts.hd) {
-      this.hdMap = new Float32Array(n * HD_BINS);
+      this.hdMap = null;
       this.hd = true;
     }
     // inter-spike intervals, accumulated the way a spike sorter reports them
@@ -151,7 +151,7 @@ class Population {
 
 // ---------------------------------------------------------------- the brain
 export class Brain {
-  constructor({ arena = 1.2, seed = 7, sex = 'M', name = 'mouse' } = {}) {
+  constructor({ arena = 1.2, seed = 7, sex = 'M', name = 'mouse', detail = 2 } = {}) {
     this.arena = arena;
     this.half = arena / 2;
     this.rnd = mulberry32(seed);
@@ -622,9 +622,10 @@ export class Brain {
      *   1 = lite   (rates and spikes, no maps, no ISI, no 1 kHz LFP)
      *   0 = drives (rates only, no spike draws — enough to behave correctly)
      */
-    this.detail = 2;
+    this.detail = -1;
 
     this.pops = P;
+    this.setDetail(detail);
     this.byKey = {};
     for (const p of P) this.byKey[p.key] = p;
 
@@ -771,7 +772,7 @@ export class Brain {
     this.pheromone = pr ? clamp(1 - pr.dist / 0.12, 0, 1) * (pr.sex !== this.sex ? 1 : 0.4) : 0;
 
     // ---------------- hunger ------------------------------------------
-    if (this.drives.eat) this.hunger = clamp(this.hunger + 0.012 * dt, 0, 1);
+    if (this.drives.eat) this.hunger = clamp(this.hunger + 0.012 * (this.metabolicRate || 1) * dt, 0, 1);
     this.sinceReward += dt;
     if (s.ate) {
       this.eating = 1;
@@ -784,7 +785,7 @@ export class Brain {
 
     // ---------------- thirst ------------------------------------------
     // thirst builds faster than hunger: mice drink in many short bouts
-    if (this.drives.drink) this.thirst = clamp(this.thirst + 0.009 * dt, 0, 1);
+    if (this.drives.drink) this.thirst = clamp(this.thirst + 0.009 * (this.metabolicRate || 1) * dt, 0, 1);
     else this.thirst = 0;
     this.drinking = dec(this.drinking, 0.4);
     if (s.drank && this.drives.drink) {
@@ -1713,7 +1714,13 @@ export class Brain {
   setDetail(level) {
     if (level === this.detail) return;
     this.detail = level;
-    if (level > 1) { this.lfpBuf.fill(0); this.lfpWrite = 0; }
+    if (level > 1) {
+      for (const population of this.pops) {
+        if (population.mapped && !population.spikeMap) population.spikeMap = new Float32Array(population.n * BINS * BINS);
+        if (population.hd && !population.hdMap) population.hdMap = new Float32Array(population.n * HD_BINS);
+      }
+      this.lfpBuf.fill(0); this.lfpWrite = 0;
+    }
   }
 
   /** where the newest LFP sample sits, for a reader that wants the last N */

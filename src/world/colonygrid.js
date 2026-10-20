@@ -1,32 +1,7 @@
-/**
- * Nine cages in a 3x3 grid, each under different conditions, with tunnels that
- * can be opened between neighbours.
- *
- * This is Calhoun's experiment. In 1962 he connected pens with ramps and found
- * that because the end pens had one connection and the middle pens two, the
- * animals stopped distributing themselves evenly and piled into the middle —
- * the "behavioural sink" — with the crowding pathology following from that
- * aggregation rather than from any shortage of food or water. A 3x3 grid
- * reproduces the geometry for nothing: the corners have two neighbours, the
- * edges three, and the centre four. Open the tunnels and watch where they end
- * up.
- *   Calhoun 1962, "Population Density and Social Pathology"
- *
- * The second thing to watch is in the brain rather than the cage. A place cell
- * has a separate map for every environment, so an animal that crosses a tunnel
- * remaps: the hippocampal map it was using is put away and another one comes
- * out, and the first comes back if it returns. The rate map in the panel
- * starts rebuilding from scratch at the moment of the crossing.
- *   Muller & Kubie 1987; Leutgeb et al. 2005
- *
- * Coordinates: everything inside a cage is arena-local, exactly as it is with
- * one cage. Each cage is a THREE.Group translated in x and z, so the offset is
- * applied by the parent transform and nothing inside has to know about it.
- * The transform is translation only — the articulated rig measures hip height
- * against world y = 0, so a y offset or a scale would quietly break its legs.
- */
+/** A configurable grid of cages with local coordinates and neighboring tunnels. */
 import * as THREE from 'three';
 import { Arena } from './arena.js';
+import { cageLayout } from './settings.js';
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
@@ -128,7 +103,7 @@ class Box {
     this.row = row;
     this.col = col;
     this.key = key;
-    this.cond = c;
+    this.cond = { ...c, name: `Cage ${id + 1} · ${c.name}` };
     this.origin = origin;
     this.arena = new Arena(scene, {
       lights, lamp: !lights, origin,
@@ -162,7 +137,7 @@ export class ColonyGrid {
    * @param scene          where the cages go
    * @param onEvent        (group, html) for the event feed
    */
-  constructor(scene, { onEvent = () => {} } = {}) {
+  constructor(scene, { onEvent = () => {}, count = 9 } = {}) {
     this.scene = scene;
     this.onEvent = onEvent;
     this.open = false;
@@ -170,32 +145,21 @@ export class ColonyGrid {
     this.tunnels = [];
     this.crossings = 0;
 
-    let id = 0;
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 3; col++) {
-        const key = LAYOUT[row][col];
-        const origin = { x: (col - 1) * PITCH, z: (row - 1) * PITCH };
-        // the centre cage owns the scene-wide light rig; the rest are lit by
-        // it plus a lamp of their own, so their light level still reads
-        const lights = row === 1 && col === 1;
-        this.boxes.push(new Box(scene, { id: id++, row, col, key, origin, lights }));
-      }
+    const layout = cageLayout(count);
+    this.columns = layout.columns; this.rows = layout.rows;
+    this.width = layout.columns * PITCH; this.height = layout.rows * PITCH;
+    for (const cell of layout.cells) {
+      const origin = { x: cell.x * PITCH, z: cell.z * PITCH };
+      this.boxes.push(new Box(scene, { ...cell, origin, lights: cell.id === layout.centre }));
     }
-    this.centre = this.boxes[4];
-
-    // ---- tunnels between neighbours: 12 of them in a 3x3 ----
-    this.group = new THREE.Group();
-    scene.add(this.group);
-    for (const a of this.boxes) {
-      for (const b of this.boxes) {
-        if (b.id <= a.id) continue;
-        const dr = b.row - a.row, dc = b.col - a.col;
-        if (Math.abs(dr) + Math.abs(dc) !== 1) continue;
-        this.tunnels.push(this.makeTunnel(a, b, dc ? 'x' : 'z'));
-      }
-    }
-    for (const box of this.boxes) {
-      box.links = this.tunnels.filter((t) => t.a === box || t.b === box);
+    this.centre = this.boxes[layout.centre];
+    this.group = new THREE.Group(); scene.add(this.group);
+    for (const box of this.boxes) box.links = [];
+    for (const a of this.boxes) for (const [offset, axis] of [[1, 'x'], [this.columns, 'z']]) {
+      const b = this.boxes[a.id + offset];
+      if (!b || axis === 'x' && b.row !== a.row) continue;
+      const tunnel = this.makeTunnel(a, b, axis);
+      this.tunnels.push(tunnel); a.links.push(tunnel); b.links.push(tunnel);
     }
     this.setOpen(false);
   }
@@ -287,8 +251,11 @@ export class ColonyGrid {
 
   /** which cage a world point is in */
   boxAt(wx, wz) {
-    for (const b of this.boxes) if (b.contains(wx, wz)) return b;
-    return null;
+    const col = Math.round(wx / PITCH + (this.columns - 1) / 2);
+    const row = Math.round(wz / PITCH + (this.rows - 1) / 2);
+    if (col < 0 || col >= this.columns || row < 0 || row >= this.rows) return null;
+    const box = this.boxes[row * this.columns + col];
+    return box?.contains(wx, wz) ? box : null;
   }
 
   /** the measure Calhoun's result is stated in: share of the colony in one cage */
@@ -297,7 +264,7 @@ export class ColonyGrid {
     if (!total) return { total: 0, share: 0, box: this.centre };
     let top = this.boxes[0];
     for (const b of this.boxes) if (b.population > top.population) top = b;
-    return { total, share: top.population / total, box: top, even: 1 / 9 };
+    return { total, share: top.population / total, box: top, even: 1 / this.boxes.length };
   }
 
   // ------------------------------------------------------------- panel
@@ -311,12 +278,12 @@ export class ColonyGrid {
     card.id = 'boxes';
     card.dataset.panel = 'boxes';
     card.innerHTML = `
-      <h5 data-fold><span>nine cages</span><span id="bx-sub"></span><span class="tw">▾</span></h5>
+      <h5 data-fold><span>cages</span><span id="bx-sub"></span><span class="tw">▾</span></h5>
       <div class="body">
         <div id="bx-grid"></div>
         <div id="bx-act">
           <button id="bx-open">open the tunnels</button>
-          <button id="bx-view" title="look at all nine from above">view all</button>
+          <button id="bx-view" title="Look at every cage from above">view all</button>
         </div>
         <div id="bx-sink"></div>
         <div id="bx-note"></div>
@@ -326,10 +293,11 @@ export class ColonyGrid {
     this.card = card;
 
     const grid = card.querySelector('#bx-grid');
+    grid.style.gridTemplateColumns = `repeat(${Math.min(3, this.columns)},minmax(0,1fr))`;
     this.cells = this.boxes.map((box) => {
       const el = document.createElement('div');
       el.className = 'bx';
-      el.innerHTML = `<div class="bn">${box.cond.name}</div><div class="bp">0</div>`
+      el.innerHTML = `<div class="bn">Cage ${box.id + 1}</div><div class="bp">0</div>`
         + `<div class="bs">${box.cond.short}</div>`;
       el.title = `${box.cond.name} — ${box.cond.note}`;
       el.onclick = () => { this.describe(box); if (onPick) onPick(box); };
@@ -340,7 +308,7 @@ export class ColonyGrid {
     card.querySelector('#bx-open').onclick = () => {
       this.setOpen(!this.open);
       this.onEvent('state', this.open
-        ? 'the <b>tunnels are open</b> — nine cages became one connected colony'
+        ? `the <b>tunnels are open</b> — ${this.boxes.length} cages became one connected colony`
         : 'the <b>tunnels are shut</b> — every cage is on its own again');
     };
     this.viewBtn = card.querySelector('#bx-view');
@@ -357,7 +325,7 @@ export class ColonyGrid {
     const links = box.links.length;
     note.innerHTML = `<b>${box.cond.name}</b> — ${box.cond.note}`
       + ` <b>${links}</b> tunnel${links === 1 ? '' : 's'}`
-      + (box === this.centre ? ' — the most connected cage in the grid.' : '.');
+      + '.';
   }
 
   openPanel(v) { if (this.card) this.card.style.display = v ? 'flex' : 'none'; }
@@ -385,7 +353,7 @@ export class ColonyGrid {
       if (!s.total) { sink.textContent = ''; return; }
       const pct = Math.round(s.share * 100);
       sink.innerHTML = `busiest cage: <b>${s.box.cond.name}</b> with ${pct}% of ${s.total}`
-        + ` <span style="color:var(--line2,#2a3a4f)">· even split is 11%</span>`;
+        + ` <span style="color:var(--line2,#2a3a4f)">· even split is ${(s.even * 100).toFixed(1)}%</span>`;
     }
   }
 }

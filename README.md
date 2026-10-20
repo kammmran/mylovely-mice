@@ -1,8 +1,9 @@
 # mylovely-mice
 
-A browser simulation of a mouse colony across nine cages. Each mouse has its own
-behavior, needs, and brain model. You can observe the colony, control a mouse,
-change cage conditions, and compare behavior with neural activity.
+A browser simulation of a mouse colony. It starts with nine cages; you can choose
+the cage count and starting population. Each mouse has its own behavior, needs,
+inherited traits, and brain model. Observe the colony, control a mouse, change cage
+conditions, and follow families across generations.
 
 [Open the simulation](https://kammmran.github.io/mylovely-mice/)
 
@@ -32,13 +33,47 @@ The default view shows the platform and the controls on the right:
 On a phone, open the controls with the menu button on the right.
 
 **Customize panels** groups optional panels under Platform, Brain, and Charts.
-The Nine cages panel opens in the top-left corner. Popups can be dragged by their
+The Cages panel opens in the top-left corner. Popups can be dragged by their
 headers, minimized, or closed. **Reset position** moves a popup back to its opening
 position; **Alt + arrow keys** moves a focused header with the keyboard. **Escape**
 closes the active popup.
 
 **Clean view** hides the overlays and restores the default layout. Panel and report
-preferences are saved in the browser. Reloading the page starts a new simulation.
+preferences and colony setup are saved in the browser. Reloading the page starts
+a new simulation; the animals and their family history are not saved.
+
+## Colony size and inherited traits
+
+Open **Explore → Colony setup** to enter the number of cages, starting mice per
+cage, and mutation chance. The default is **9 cages**. Leave the starting population
+blank to use the habitat presets, or enter a count for every cage. The all-male
+habitat starts with males; other habitats use mixed sexes. **Start new colony**
+applies the settings and clears the current session.
+
+The same window lets you add any number of males, females, or mixed mice to a
+chosen cage during a session. Adding runs in batches and can be stopped. There is
+no fixed mouse cap; memory and processing power set the practical limit. Distant
+mice use instanced bodies, and the colony list has search and page controls.
+
+Open **Explore → Genetics & families** to inspect inheritance:
+
+- **Generations:** choose a cage and modeled locus to see allele frequencies in
+  G0 founders, G1 offspring, and later generations. Expand **Choose a breeding
+  pair** to start a pregnancy, or let mice mate naturally.
+- **Family tree:** find a mouse by name or ID, follow either parent and their
+  offspring, and inspect the alleles inherited from its mother and father.
+- **Compare cages:** compare the living population in each cage with its G0
+  baseline. Birth-generation charts retain mice that later move or die.
+
+Parents and offspring genotypes are recorded at conception. Birth and weaning
+preserve those family links. Coat tone, exploration, metabolism, threat sensitivity,
+and body size have simplified inherited effects. These are illustrative loci,
+not identified mouse genes. Cage conditions affect behavior and survival rather
+than changing a mouse's genome directly.
+
+**Download family data** exports the pedigree and genotypes as JSON.
+**Download generation CSV** exports allele frequencies for every cage and generation.
+See [genetics notes](docs/genetics.md) for the model and how to read the charts.
 
 ## Controls
 
@@ -53,8 +88,8 @@ preferences are saved in the browser. Reloading the page starts a new simulation
 | `P` | Pause or resume |
 | `R` | Restart the session, after confirmation |
 | `.` / `,` | Cycle through 1×, 2×, 4×, and 8× speed / return to 1× |
-| `C` | Cycle through follow, orbit, top, and all-nine camera views |
-| `J` | Open Nine cages |
+| `C` | Cycle through follow, orbit, top, and all-cages camera views |
+| `J` | Open Cages |
 | `K` | Open or close the tunnels |
 | `B` | Open neural signals |
 | `G` | Open optogenetics |
@@ -113,13 +148,17 @@ its name and description. Body outlines and labels can be hidden.
 The anatomy is a schematic model, with approximate organ shapes and illustrative
 pulses and blood flow. See [docs/anatomy.md](docs/anatomy.md) for its scope.
 
-The cages form a 3×3 grid:
+The default nine cages form a 3×3 grid:
 
 ```text
 no water       bright light    scarce food
 all male       control         well provisioned
 crowded        fox odor        intermittent noise
 ```
+
+Custom cage counts form a compact grid, with a control cage near the center and
+the other habitat conditions repeated around it. The overview camera fits the
+configured grid.
 
 Each cage has its own animals and conditions. Opening the tunnels lets mice move
 between cages. The model keeps a separate hippocampal map for each environment
@@ -195,6 +234,7 @@ and [docs/biomechanics.md](docs/biomechanics.md).
 | `src/main.js` | Simulation loop, input, and panel wiring |
 | `src/neuro/` | Brain populations, region definitions, and signal analysis |
 | `src/world/` | Cages, mouse bodies, movement, breeding, threats, and mortality |
+| `src/world/genetics.js`, `src/world/settings.js` | Inheritance, family records, and colony configuration |
 | `src/view/` | Brain view, plots, sidebar, and floating windows |
 | `src/report.js` | Report capture, preview, and exports |
 | `src/reportoptions.js`, `src/reportvisuals.js` | Report choices and figure drawing |
@@ -212,12 +252,15 @@ node .github/scripts/check-page.mjs
 node .github/scripts/check-report.mjs
 node .github/scripts/check-behavior.mjs
 node .github/scripts/check-threats.mjs
+node .github/scripts/check-genetics.mjs
 ```
 
 [CI](.github/workflows/ci.yml) also checks module syntax and JSON files, then runs
 Playwright against the staged site at `/mylovely-mice/`. The browser checks cover
 the simulation, predator responses, live anatomy, panel controls, saved preferences,
-mobile layout, report choices, and document downloads.
+mobile layout, report choices, and document downloads. Genetics checks cover
+parent-to-offspring transmission, G2 families, birth and weaning, populations above
+100, custom cage counts, and family-data exports.
 
 Pushes to `main` run [the Pages workflow](.github/workflows/deploy.yml). It publishes
 only after the checks pass. To deploy a fork, set **Settings → Pages → Build and

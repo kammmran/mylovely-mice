@@ -1,6 +1,8 @@
 /** Shared names, sizes and home positions for the floating workspace. */
 export const POPUPS = {
-  boxes: { title: 'Nine cages', description: 'Conditions, populations & tunnels', icon: 'grid', home: 'top-left', width: 350, height: 590 },
+  boxes: { title: 'Cages', description: 'Conditions, populations & tunnels', icon: 'grid', home: 'top-left', width: 350, height: 590 },
+  genetics: { title: 'Genetics & families', description: 'Inheritance, generations & cage comparisons', icon: 'activity', home: 'top-right', width: 720, height: 760 },
+  'colony-setup': { title: 'Colony setup', description: 'Choose cage counts & add mice', icon: 'sliders', home: 'top-right', width: 420, height: 740 },
   colony: { title: 'Mouse colony', description: 'Choose a mouse & adjust its habitat', icon: 'mouse', home: 'top-right', width: 350, height: 640 },
   feed: { title: 'Activity feed', description: 'Follow what happens in the colony', icon: 'activity', home: 'bottom-left', width: 350, height: 340 },
   threats: { title: 'Threat stimuli', description: 'Present a stimulus & watch the response', icon: 'bolt', home: 'top-left', width: 350, height: 610 },
